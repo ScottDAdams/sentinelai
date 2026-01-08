@@ -1,0 +1,66 @@
+@import "tailwindcss";
+@reference "tailwindcss";
+
+
+/* Base: kill the Vite starter styles that fight layout */
+:root {
+  color-scheme: light;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: #f8fafc; /* slate-50-ish */
+  color: #0f172a;      /* slate-900-ish */
+}
+
+/* Optional: nicer default text rendering */
+* {
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Design system primitives */
+@layer components {
+  .card {
+    @apply bg-white rounded-xl border border-gray-200 shadow-sm;
+  }
+
+  .card-pad {
+    @apply p-6;
+  }
+
+  .label {
+    @apply block text-sm font-medium text-gray-700 mb-2;
+  }
+
+  .input {
+    @apply w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white;
+    @apply focus:outline-none focus:ring-2 focus:ring-gray-900/10 focus:border-gray-400;
+  }
+
+  .textarea {
+    @apply w-full px-4 py-3 border border-gray-300 rounded-lg bg-white;
+    @apply font-mono text-sm;
+    @apply focus:outline-none focus:ring-2 focus:ring-gray-900/10 focus:border-gray-400;
+  }
+
+  .button-primary {
+    @apply w-full px-6 py-3 rounded-xl font-semibold;
+    @apply bg-gray-900 text-white hover:bg-gray-800;
+    @apply disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .badge {
+    @apply inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium;
+  }
+
+  .badge-muted {
+    @apply bg-gray-100 text-gray-700;
+  }
+}
