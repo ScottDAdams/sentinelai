@@ -2,6 +2,7 @@
 Sentinel Demo API - FastAPI Backend
 """
 import os
+import time
 import uuid
 from datetime import datetime
 from typing import Optional, List
@@ -14,7 +15,13 @@ import json
 
 load_dotenv()
 
+# Build/version fingerprint
+API_BUILD = os.getenv("API_BUILD", str(int(time.time())))
+
 app = FastAPI(title="Sentinel Demo API", version="1.0.0")
+
+# Print build info on startup
+print(f"Sentinel Demo API starting - Build: {API_BUILD}")
 
 # CORS
 cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")
@@ -34,6 +41,23 @@ if not supabase_url or not supabase_key:
 
 supabase: Client = create_client(supabase_url, supabase_key)
 demo_mode = os.getenv("DEMO_MODE", "true").lower() == "true"
+
+
+def load_policies(policy_pack_version: str = "v1") -> List[dict]:
+    """Load policies from Supabase for the given policy pack version"""
+    policies_result = supabase.table("policies").select("*").eq("status", "ENABLED").execute()
+    policies = []
+    for p in policies_result.data:
+        policies.append({
+            "id": p["id"],
+            "name": p["name"],
+            "scope": p["scope"],
+            "status": p["status"],
+            "version": p["version"],
+            "conditions": p["conditions"],
+            "action": p["action"],
+        })
+    return policies
 
 
 # Pydantic models (matching TypeScript types)
@@ -115,188 +139,264 @@ class GetPoliciesResponse(BaseModel):
 
 
 # Stub logic for demo scenarios
-def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional[str] = None):
-    """Generate deterministic demo run results based on scenario"""
-    
-    # Determine scenario from scenario_id or heuristics
-    if not scenario_id:
-        content_lower = input_content.lower()
-        if any(x in content_lower for x in ['ssn', 'social security', 'phone', '555-']):
-            scenario_id = 'pii_chat'
-        elif any(x in content_lower for x in ['salary', 'compensation', 'csv']):
-            scenario_id = 'file_comp'
-        elif any(x in content_lower for x in ['api_key', 'apiKey', 'secret', 'password']):
-            scenario_id = 'code_secret'
-        elif any(x in content_lower for x in ['ignore', 'forget', 'reveal', 'show me']):
-            scenario_id = 'injection'
-        else:
-            scenario_id = 'pii_chat'  # default
+def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional[str] = None, policy_pack_version: str = "v1"):
+    """Generate deterministic demo run results based on scenario or policy evaluation"""
+    import re
     
     annotations = []
     events = []
-    baseline_output = ""
-    governed_output = ""
+    baseline_output = input_content
+    governed_output = input_content
     verdict = "SHIPPABLE"
     user_message = "Output is ready to ship."
     
-    if scenario_id == 'pii_chat':
-        # PII Chat scenario
-        baseline_output = input_content
-        governed_output = input_content
+    # If no scenario_id provided, evaluate all policies from Supabase based on their patterns
+    if not scenario_id:
+        # Load policies from Supabase (no caching - fresh on each run)
+        policies = load_policies(policy_pack_version)
         
-        # Find and redact SSN + phone (apply from end -> start to avoid index drift)
-        import re
-
-        text = input_content
-        governed_output = text
-
-        ssn_pattern = r"\b\d{3}-\d{2}-\d{4}\b"
-        phone_pattern = r"\b\d{3}[-.]?\d{3}[-.]?\d{4}\b"
-
-        raw_matches = []
-        for m in re.finditer(ssn_pattern, text):
-            raw_matches.append((m.start(), m.end(), m.group(), "Sensitive Data Policy", "REDACT"))
-        for m in re.finditer(phone_pattern, text):
-            raw_matches.append((m.start(), m.end(), m.group(), "Sensitive Data Policy", "REDACT"))
-
+        evaluated_policies = []
+        all_matches = []
+        
+        # Evaluate each enabled policy that matches the input_type scope
+        for policy in policies:
+            if input_type not in policy["scope"]:
+                continue  # Skip policies that don't apply to this input type
+            
+            policy_id = policy["id"]
+            policy_name = policy["name"]
+            policy_action = policy["action"]
+            conditions = policy.get("conditions", {})
+            
+            # Get regex patterns from conditions.patterns (list of regex strings)
+            regex_patterns = conditions.get("patterns", [])
+            
+            # Debug: Log policy evaluation details before matching
+            conditions_keys = list(conditions.keys())
+            patterns_preview = regex_patterns[:3] if len(regex_patterns) > 0 else []
+            matching_method = "regex"  # Always using regex for patterns
+            
+            debug_info = {
+                "policy_id": policy_id,
+                "policy_name": policy_name,
+                "conditions_keys": conditions_keys,
+                "patterns_preview": patterns_preview,
+                "patterns_count": len(regex_patterns),
+                "matching_method": matching_method,
+                "input_type": input_type,
+                "input_length": len(input_content)
+            }
+            print(f"[POLICY_EVAL] {json.dumps(debug_info)}")
+            
+            # Evaluate each pattern for this policy using regex (re.finditer)
+            for pattern_str in regex_patterns:
+                try:
+                    # Use re.finditer for regex pattern matching (not substring matching)
+                    for match in re.finditer(pattern_str, input_content, re.IGNORECASE):
+                        start, end = match.span()
+                        all_matches.append((start, end, match.group(), policy_name, policy_action))
+                except re.error as e:
+                    # Log pattern errors but continue
+                    print(f"Warning: Invalid regex pattern in policy {policy_name}: {pattern_str} - {e}")
+            
+            # Check if this policy had any matches
+            if any(p[3] == policy_name for p in all_matches):
+                evaluated_policies.append(policy_name)
+        
         # Sort + de-dupe overlaps
-        raw_matches.sort(key=lambda x: (x[0], x[1]))
+        all_matches.sort(key=lambda x: (x[0], x[1]))
         matches = []
         last_end = -1
-        for start, end, span, policy, action in raw_matches:
+        for start, end, span, policy, action in all_matches:
             if start >= last_end:
                 matches.append((start, end, span, policy, action))
                 last_end = end
-
-        # Build annotations from original indices
+        
+        # Build annotations
         annotations = [
             Annotation(span=span, policy_name=policy, action=action, start=start, end=end)
             for start, end, span, policy, action in matches
         ]
-        if annotations:
+        
+        # Determine verdict based on actions
+        if any(a.action == "BLOCK" for a in annotations):
+            verdict = "BLOCKED"
+            user_message = "This request was blocked due to potential prompt injection."
+            governed_output = "I cannot fulfill this request. It appears to be attempting to override my instructions."
+        elif annotations:
             verdict = "REDACTED"
             user_message = "Output has been redacted to remove sensitive information."
-        else:
-            verdict = "SHIPPABLE"
-            user_message = "Output is ready to ship."
-
-
-        # Apply replacements from end -> start
-        for start, end, span, policy, action in sorted(matches, key=lambda x: x[0], reverse=True):
-            governed_output = governed_output[:start] + "[REDACTED]" + governed_output[end:]
-
+            # Apply redactions from end -> start to avoid index drift
+            for start, end, span, policy, action in sorted(matches, key=lambda x: x[0], reverse=True):
+                if action == "REDACT":
+                    # Simple redaction - replace matched span with [REDACTED]
+                    governed_output = governed_output[:start] + "[REDACTED]" + governed_output[end:]
         
-        # Events
+        # Generate events
         events = [
             {"event_type": "Input Sanitized", "payload": {"input_length": len(input_content)}},
-            {"event_type": "Policy Evaluated", "payload": {"policies": ["Sensitive Data Policy"]}},
-            {"event_type": "Violation Detected", "payload": {"policy": "Sensitive Data Policy", "matches": len(annotations)}},
-            {"event_type": "Action Applied", "payload": {"action": "REDACT", "redactions": len(annotations)}},
-            {"event_type": "Final Output Released", "payload": {"verdict": verdict}},
+            {"event_type": "Policy Evaluated", "payload": {"policies": evaluated_policies}},
         ]
-    
-    elif scenario_id == 'file_comp':
-        # Compensation file scenario
-        baseline_output = input_content
-        governed_output = input_content
-        
-        # Simple heuristic: if CSV-like, summarize
-        if ',' in input_content or '\t' in input_content:
-            lines = input_content.split('\n')
-            if len(lines) > 1:
-                # Assume header + data rows
-                header = lines[0]
-                data_rows = lines[1:]
-                
-                baseline_output = input_content
-                
-                # Create summary (remove names, aggregate)
-                summary_lines = [header]
-                summary_lines.append("Summary: Total records processed. Individual salaries redacted.")
-                summary_lines.append("Aggregate statistics available upon request.")
-                
-                governed_output = '\n'.join(summary_lines)
-                
-                # Annotate original content
-                annotations.append(Annotation(
-                    span="Individual salary data",
-                    policy_name="Confidential File Policy",
-                    action="REDACT",
-                    start=len(header) + 1,
-                    end=len(input_content)
-                ))
-                
-                verdict = "REDACTED"
-                user_message = "File content has been summarized. Individual compensation data has been redacted."
-        
-        events = [
-            {"event_type": "Input Sanitized", "payload": {"input_length": len(input_content), "file_type": "csv"}},
-            {"event_type": "Policy Evaluated", "payload": {"policies": ["Confidential File Policy"]}},
-            {"event_type": "Violation Detected", "payload": {"policy": "Confidential File Policy", "reason": "Contains confidential compensation data"}},
-            {"event_type": "Action Applied", "payload": {"action": "REDACT", "method": "summarization"}},
-            {"event_type": "Final Output Released", "payload": {"verdict": verdict}},
-        ]
-    
-    elif scenario_id == 'code_secret':
-        # Code secret scenario
-        baseline_output = input_content
-        governed_output = input_content
-        
-        # Find API keys, secrets
-        import re
-        key_patterns = [
-            (r'api[_-]?key\s*[:=]\s*["\']?([a-zA-Z0-9_-]{20,})["\']?', 'api_key'),
-            (r'secret\s*[:=]\s*["\']?([a-zA-Z0-9_-]{20,})["\']?', 'secret'),
-            (r'password\s*[:=]\s*["\']?([^"\'\n]+)["\']?', 'password'),
-        ]
-        
-        for pattern, key_type in key_patterns:
-            for match in re.finditer(pattern, input_content, re.IGNORECASE):
-                start, end = match.span()
-                annotations.append(Annotation(
-                    span=match.group(),
-                    policy_name="Secrets Policy",
-                    action="REDACT",
-                    start=start,
-                    end=end
-                ))
-                replacement = f"{match.group().split('=')[0] if '=' in match.group() else match.group().split(':')[0]}= [REDACTED]"
-                governed_output = governed_output[:start] + replacement + governed_output[end:]
         
         if annotations:
-            verdict = "REDACTED"
-            user_message = "Secrets have been redacted. Please use environment variables for sensitive credentials."
+            violations = {}
+            for ann in annotations:
+                if ann.policy_name not in violations:
+                    violations[ann.policy_name] = 0
+                violations[ann.policy_name] += 1
+            
+            for policy_name, count in violations.items():
+                events.append({
+                    "event_type": "Violation Detected",
+                    "payload": {"policy": policy_name, "matches": count}
+                })
+            
+            redact_count = sum(1 for a in annotations if a.action == "REDACT")
+            if redact_count > 0:
+                events.append({
+                    "event_type": "Action Applied",
+                    "payload": {"action": "REDACT", "redactions": redact_count}
+                })
+            
+            if any(a.action == "BLOCK" for a in annotations):
+                events.append({
+                    "event_type": "Action Applied",
+                    "payload": {"action": "BLOCK"}
+                })
         
-        events = [
-            {"event_type": "Input Sanitized", "payload": {"input_length": len(input_content)}},
-            {"event_type": "Policy Evaluated", "payload": {"policies": ["Secrets Policy"]}},
-            {"event_type": "Violation Detected", "payload": {"policy": "Secrets Policy", "matches": len(annotations)}},
-            {"event_type": "Action Applied", "payload": {"action": "REDACT", "redactions": len(annotations)}},
-            {"event_type": "Final Output Released", "payload": {"verdict": verdict}},
-        ]
+        events.append({
+            "event_type": "Final Output Released",
+            "payload": {"verdict": verdict}
+        })
+        
+        return {
+            "baseline_output": baseline_output,
+            "governed_output": governed_output,
+            "verdict": verdict,
+            "user_message": user_message,
+            "annotations": annotations,
+            "events": events,
+        }
     
-    elif scenario_id == 'injection':
-        # Prompt injection scenario
-        baseline_output = "I'll help you with that. Here are the policies: [FAKE POLICY LIST]"
-        governed_output = "I cannot fulfill this request. It appears to be attempting to override my instructions."
-        verdict = "BLOCKED"
-        user_message = "This request was blocked due to potential prompt injection."
+    # Explicit scenario handling (only when scenario_id is provided)
+    # Even for explicit scenarios, use policies from Supabase (no hardcoded policy names)
+    if scenario_id:
+        # Load policies from Supabase (no caching - fresh on each run)
+        policies = load_policies(policy_pack_version)
         
-        annotations.append(Annotation(
-            span=input_content[:50] + "...",
-            policy_name="Prompt Injection Defense",
-            action="BLOCK",
-            start=0,
-            end=len(input_content)
-        ))
+        evaluated_policies = []
+        all_matches = []
         
+        # Evaluate each enabled policy that matches the input_type scope
+        for policy in policies:
+            if input_type not in policy["scope"]:
+                continue  # Skip policies that don't apply to this input type
+            
+            policy_id = policy["id"]
+            policy_name = policy["name"]
+            policy_action = policy["action"]
+            conditions = policy.get("conditions", {})
+            
+            # Get regex patterns from conditions.patterns (list of regex strings)
+            regex_patterns = conditions.get("patterns", [])
+            
+            # Debug: Log policy evaluation details before matching
+            conditions_keys = list(conditions.keys())
+            patterns_preview = regex_patterns[:3] if len(regex_patterns) > 0 else []
+            matching_method = "regex"  # Always using regex for patterns
+            
+            debug_info = {
+                "policy_id": policy_id,
+                "policy_name": policy_name,
+                "conditions_keys": conditions_keys,
+                "patterns_preview": patterns_preview,
+                "patterns_count": len(regex_patterns),
+                "matching_method": matching_method,
+                "input_type": input_type,
+                "input_length": len(input_content),
+                "scenario_id": scenario_id
+            }
+            print(f"[POLICY_EVAL] {json.dumps(debug_info)}")
+            
+            # Evaluate each pattern for this policy using regex (re.finditer)
+            for pattern_str in regex_patterns:
+                try:
+                    # Use re.finditer for regex pattern matching (not substring matching)
+                    for match in re.finditer(pattern_str, input_content, re.IGNORECASE):
+                        start, end = match.span()
+                        all_matches.append((start, end, match.group(), policy_name, policy_action))
+                except re.error as e:
+                    # Log pattern errors but continue
+                    print(f"Warning: Invalid regex pattern in policy {policy_name}: {pattern_str} - {e}")
+            
+            # Check if this policy had any matches
+            if any(p[3] == policy_name for p in all_matches):
+                evaluated_policies.append(policy_name)
+        
+        # Sort + de-dupe overlaps
+        all_matches.sort(key=lambda x: (x[0], x[1]))
+        matches = []
+        last_end = -1
+        for start, end, span, policy, action in all_matches:
+            if start >= last_end:
+                matches.append((start, end, span, policy, action))
+                last_end = end
+        
+        # Build annotations
+        annotations = [
+            Annotation(span=span, policy_name=policy, action=action, start=start, end=end)
+            for start, end, span, policy, action in matches
+        ]
+        
+        # Determine verdict based on actions
+        if any(a.action == "BLOCK" for a in annotations):
+            verdict = "BLOCKED"
+            user_message = "This request was blocked due to potential prompt injection."
+            governed_output = "I cannot fulfill this request. It appears to be attempting to override my instructions."
+        elif annotations:
+            verdict = "REDACTED"
+            user_message = "Output has been redacted to remove sensitive information."
+            # Apply redactions from end -> start to avoid index drift
+            for start, end, span, policy, action in sorted(matches, key=lambda x: x[0], reverse=True):
+                if action == "REDACT":
+                    governed_output = governed_output[:start] + "[REDACTED]" + governed_output[end:]
+        
+        # Generate events using policy names from DB
         events = [
             {"event_type": "Input Sanitized", "payload": {"input_length": len(input_content)}},
-            {"event_type": "Policy Evaluated", "payload": {"policies": ["Prompt Injection Defense"]}},
-            {"event_type": "Violation Detected", "payload": {"policy": "Prompt Injection Defense", "reason": "Suspicious instruction pattern"}},
-            {"event_type": "Action Applied", "payload": {"action": "BLOCK"}},
-            {"event_type": "Final Output Released", "payload": {"verdict": verdict}},
+            {"event_type": "Policy Evaluated", "payload": {"policies": evaluated_policies}},
         ]
+        
+        if annotations:
+            violations = {}
+            for ann in annotations:
+                if ann.policy_name not in violations:
+                    violations[ann.policy_name] = 0
+                violations[ann.policy_name] += 1
+            
+            for policy_name, count in violations.items():
+                events.append({
+                    "event_type": "Violation Detected",
+                    "payload": {"policy": policy_name, "matches": count}
+                })
+            
+            redact_count = sum(1 for a in annotations if a.action == "REDACT")
+            if redact_count > 0:
+                events.append({
+                    "event_type": "Action Applied",
+                    "payload": {"action": "REDACT", "redactions": redact_count}
+                })
+            
+            if any(a.action == "BLOCK" for a in annotations):
+                events.append({
+                    "event_type": "Action Applied",
+                    "payload": {"action": "BLOCK"}
+                })
+        
+        events.append({
+            "event_type": "Final Output Released",
+            "payload": {"verdict": verdict}
+        })
     
     return {
         "baseline_output": baseline_output,
@@ -313,9 +413,10 @@ async def create_run(request: CreateRunRequest):
     """Create a new run and generate stub results"""
     run_id = str(uuid.uuid4())
     created_at = datetime.utcnow().isoformat()
+    policy_pack_version = "v1"
     
-    # Generate demo results
-    result = generate_demo_run(request.input_type, request.input_content, request.scenario_id)
+    # Generate demo results (loads policies from Supabase when scenario_id is None)
+    result = generate_demo_run(request.input_type, request.input_content, request.scenario_id, policy_pack_version)
     
     # Create input preview (first 100 chars)
     input_preview = request.input_content[:100] + ("..." if len(request.input_content) > 100 else "")
@@ -404,9 +505,23 @@ async def export_run(run_id: str):
     events_result = supabase.table("run_events").select("*").eq("run_id", run_id).order("seq").execute()
     events = [RunEvent(**e) for e in events_result.data]
     
-    # Get policies
+    # Extract evaluated policy names from events
+    evaluated_policy_names = set()
+    for event in events:
+        if event.event_type == "Policy Evaluated":
+            policy_list = event.payload.get("policies", [])
+            evaluated_policy_names.update(policy_list)
+    
+    # Get all policies, but filter to only those that were actually evaluated
     policies_result = supabase.table("policies").select("*").execute()
-    policies = [Policy(**p) for p in policies_result.data]
+    all_policies = [Policy(**p) for p in policies_result.data]
+    
+    # Filter to only policies that were evaluated (match by name)
+    evaluated_policies = [p for p in all_policies if p.name in evaluated_policy_names]
+    
+    # If no evaluated policies found in events, fall back to all policies (for backward compatibility)
+    if not evaluated_policies:
+        evaluated_policies = all_policies
     
     # SIEM payload preview
     siem_payload = {
@@ -424,7 +539,7 @@ async def export_run(run_id: str):
         events=events,
         policy_snapshot={
             "policy_pack_version": run.policy_pack_version,
-            "policies": [p.dict() for p in policies],
+            "policies": [p.dict() for p in evaluated_policies],
             "annotations": annotations
         },
         siem_payload_preview=siem_payload
@@ -443,7 +558,34 @@ async def get_policies():
     )
 
 
+@app.get("/v1/debug/policy-pack")
+async def debug_policy_pack(policy_pack_version: str = "v1"):
+    """Debug endpoint to show exact policy pack used for evaluation"""
+    policies = load_policies(policy_pack_version)
+    
+    # Format for debugging
+    debug_info = {
+        "policy_pack_version": policy_pack_version,
+        "policies": []
+    }
+    
+    for policy in policies:
+        debug_info["policies"].append({
+            "id": policy["id"],
+            "name": policy["name"],
+            "scope": policy["scope"],
+            "status": policy["status"],
+            "version": policy["version"],
+            "action": policy["action"],
+            "conditions": policy["conditions"],
+            "patterns": policy["conditions"].get("patterns", []),
+            "keywords": policy["conditions"].get("keywords", []),
+        })
+    
+    return debug_info
+
+
 @app.get("/health")
 async def health():
     """Health check"""
-    return {"status": "ok", "demo_mode": demo_mode}
+    return {"status": "ok", "demo_mode": demo_mode, "api_build": API_BUILD}
