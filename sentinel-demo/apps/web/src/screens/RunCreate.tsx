@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../lib/api'
 import type { InputType } from '@shared/types'
+import { DEMO_SAMPLES } from '../lib/samples'
 import Layout from "../components/Layout";
 import ContentShell from "../components/ContentShell";
 
@@ -10,9 +11,22 @@ export default function RunCreate() {
   const navigate = useNavigate()
   const [inputType, setInputType] = useState<InputType>('chat')
   const [inputContent, setInputContent] = useState('')
-  const [scenarioId, setScenarioId] = useState<string>('')
+  const [scenarioId, setScenarioId] = useState<'pii_chat' | 'file_comp' | 'code_secret' | 'injection' | ''>('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [selectedSampleId, setSelectedSampleId] = useState<string>('')
+
+  const handleLoadSample = () => {
+    if (!selectedSampleId) return
+
+    const sample = DEMO_SAMPLES.find(s => s.id === selectedSampleId)
+    if (sample) {
+      setInputType(sample.input_type)
+      setInputContent(sample.content)
+      setScenarioId('') // Clear any scenario override
+      setSelectedSampleId('') // Reset dropdown after loading
+    }
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -73,7 +87,7 @@ export default function RunCreate() {
             </label>
             <select
               value={scenarioId}
-              onChange={(e) => setScenarioId(e.target.value)}
+              onChange={(e) => setScenarioId(e.target.value as typeof scenarioId)}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
             >
               <option value="">Auto-detect</option>
@@ -82,6 +96,34 @@ export default function RunCreate() {
               <option value="code_secret">Code Secret</option>
               <option value="injection">Injection</option>
             </select>
+          </div>
+
+          <div className="bg-white rounded-lg border border-gray-200 p-6">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Load sample data
+            </label>
+            <div className="flex gap-2">
+              <select
+                value={selectedSampleId}
+                onChange={(e) => setSelectedSampleId(e.target.value)}
+                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm"
+              >
+                <option value="">Select a sample...</option>
+                {DEMO_SAMPLES.map((sample) => (
+                  <option key={sample.id} value={sample.id}>
+                    {sample.label}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={handleLoadSample}
+                disabled={!selectedSampleId}
+                className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Load
+              </button>
+            </div>
           </div>
   
           <div className="bg-white rounded-lg border border-gray-200 p-6">

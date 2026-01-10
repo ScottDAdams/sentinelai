@@ -60,6 +60,79 @@ def load_policies(policy_pack_version: str = "v1") -> List[dict]:
     return policies
 
 
+def extract_value_span(matched_text: str, match_start: int, match_end: int):
+    """
+    Extract the value portion span from a KEY=VALUE or Header: Value match.
+    Annotations should record only the VALUE portion, not the key name.
+    
+    Args:
+        matched_text: The full matched text
+        match_start: Start position of the full match
+        match_end: End position of the full match
+    
+    Returns:
+        Tuple of (value_start, value_end, value_span) representing just the value portion.
+        If no delimiter found, returns original (match_start, match_end, matched_text).
+    """
+    # Check if matched text contains '=' (preferred) or ':' delimiter
+    if '=' in matched_text:
+        delimiter_idx = matched_text.find('=')
+        value_start_in_match = delimiter_idx + 1
+        # Skip any whitespace after '='
+        while value_start_in_match < len(matched_text) and matched_text[value_start_in_match] in ' \t':
+            value_start_in_match += 1
+        value_span = matched_text[value_start_in_match:]
+        value_start = match_start + value_start_in_match
+        value_end = match_end
+        return (value_start, value_end, value_span)
+    elif ':' in matched_text:
+        delimiter_idx = matched_text.find(':')
+        value_start_in_match = delimiter_idx + 1
+        # Skip any whitespace after ':'
+        while value_start_in_match < len(matched_text) and matched_text[value_start_in_match] in ' \t':
+            value_start_in_match += 1
+        value_span = matched_text[value_start_in_match:]
+        value_start = match_start + value_start_in_match
+        value_end = match_end
+        return (value_start, value_end, value_span)
+    else:
+        # No delimiter found, entire match is the value
+        return (match_start, match_end, matched_text)
+
+
+def apply_redaction(content: str, start: int, end: int, matched_text: str) -> str:
+    """
+    Apply redaction to content, preserving variable names for KEY=VALUE or KEY: VALUE formats.
+    
+    Args:
+        content: The full content string
+        start: Start position of the match (full match including key)
+        end: End position of the match (full match including key)
+        matched_text: The matched text span (full match including key)
+    
+    Returns:
+        The content with redaction applied (preserves key name, redacts value)
+    """
+    # Check if matched text contains '=' (preferred) or ':' delimiter
+    if '=' in matched_text:
+        delimiter_idx = matched_text.find('=')
+        # Keep variable name and delimiter, replace value
+        replacement = matched_text[:delimiter_idx + 1] + "[REDACTED]"
+    elif ':' in matched_text:
+        delimiter_idx = matched_text.find(':')
+        # Keep variable name and delimiter, replace value
+        # Handle optional space after colon
+        space_after_colon = 0
+        if delimiter_idx + 1 < len(matched_text) and matched_text[delimiter_idx + 1] == ' ':
+            space_after_colon = 1
+        replacement = matched_text[:delimiter_idx + 1 + space_after_colon] + "[REDACTED]"
+    else:
+        # No delimiter found, replace entire span
+        replacement = "[REDACTED]"
+    
+    return content[:start] + replacement + content[end:]
+
+
 # Pydantic models (matching TypeScript types)
 class Annotation(BaseModel):
     span: str
@@ -193,29 +266,38 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
                 try:
                     # Use re.finditer for regex pattern matching (not substring matching)
                     for match in re.finditer(pattern_str, input_content, re.IGNORECASE):
-                        start, end = match.span()
-                        all_matches.append((start, end, match.group(), policy_name, policy_action))
+                        match_start, match_end = match.span()
+                        matched_text = match.group()
+                        
+                        # Extract value portion for annotation (records only the value, not the key)
+                        value_start, value_end, value_span = extract_value_span(matched_text, match_start, match_end)
+                        
+                        # Store: (match_start, match_end, matched_text_full, value_start, value_end, value_span, policy_name, policy_action)
+                        # match_start/end and matched_text needed for redaction (preserves key name)
+                        # value_start/end/span needed for annotation (records only value for UI highlighting)
+                        all_matches.append((match_start, match_end, matched_text, value_start, value_end, value_span, policy_name, policy_action))
                 except re.error as e:
                     # Log pattern errors but continue
                     print(f"Warning: Invalid regex pattern in policy {policy_name}: {pattern_str} - {e}")
             
             # Check if this policy had any matches
-            if any(p[3] == policy_name for p in all_matches):
+            if any(p[6] == policy_name for p in all_matches):
                 evaluated_policies.append(policy_name)
         
-        # Sort + de-dupe overlaps
-        all_matches.sort(key=lambda x: (x[0], x[1]))
+        # Sort + de-dupe overlaps (based on value portion to avoid overlapping annotations)
+        all_matches.sort(key=lambda x: (x[3], x[4]))  # Sort by value_start, value_end
         matches = []
-        last_end = -1
-        for start, end, span, policy, action in all_matches:
-            if start >= last_end:
-                matches.append((start, end, span, policy, action))
-                last_end = end
+        last_value_end = -1
+        for match_start, match_end, matched_text, value_start, value_end, value_span, policy, action in all_matches:
+            if value_start >= last_value_end:
+                matches.append((match_start, match_end, matched_text, value_start, value_end, value_span, policy, action))
+                last_value_end = value_end
         
-        # Build annotations
+        # Build annotations using VALUE portion only (for UI highlighting and SIEM export)
+        # Each annotation records: policy_name, action, start, end, span (all for VALUE portion)
         annotations = [
-            Annotation(span=span, policy_name=policy, action=action, start=start, end=end)
-            for start, end, span, policy, action in matches
+            Annotation(span=value_span, policy_name=policy, action=action, start=value_start, end=value_end)
+            for match_start, match_end, matched_text, value_start, value_end, value_span, policy, action in matches
         ]
         
         # Determine verdict based on actions
@@ -227,10 +309,11 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
             verdict = "REDACTED"
             user_message = "Output has been redacted to remove sensitive information."
             # Apply redactions from end -> start to avoid index drift
-            for start, end, span, policy, action in sorted(matches, key=lambda x: x[0], reverse=True):
+            # Use full match info (match_start, match_end, matched_text) for redaction (preserves key name)
+            for match_start, match_end, matched_text, value_start, value_end, value_span, policy, action in sorted(matches, key=lambda x: x[0], reverse=True):
                 if action == "REDACT":
-                    # Simple redaction - replace matched span with [REDACTED]
-                    governed_output = governed_output[:start] + "[REDACTED]" + governed_output[end:]
+                    # Preserve variable names for KEY=VALUE or KEY: VALUE formats
+                    governed_output = apply_redaction(governed_output, match_start, match_end, matched_text)
         
         # Generate events
         events = [
@@ -323,29 +406,38 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
                 try:
                     # Use re.finditer for regex pattern matching (not substring matching)
                     for match in re.finditer(pattern_str, input_content, re.IGNORECASE):
-                        start, end = match.span()
-                        all_matches.append((start, end, match.group(), policy_name, policy_action))
+                        match_start, match_end = match.span()
+                        matched_text = match.group()
+                        
+                        # Extract value portion for annotation (records only the value, not the key)
+                        value_start, value_end, value_span = extract_value_span(matched_text, match_start, match_end)
+                        
+                        # Store: (match_start, match_end, matched_text_full, value_start, value_end, value_span, policy_name, policy_action)
+                        # match_start/end and matched_text needed for redaction (preserves key name)
+                        # value_start/end/span needed for annotation (records only value for UI highlighting)
+                        all_matches.append((match_start, match_end, matched_text, value_start, value_end, value_span, policy_name, policy_action))
                 except re.error as e:
                     # Log pattern errors but continue
                     print(f"Warning: Invalid regex pattern in policy {policy_name}: {pattern_str} - {e}")
             
             # Check if this policy had any matches
-            if any(p[3] == policy_name for p in all_matches):
+            if any(p[6] == policy_name for p in all_matches):
                 evaluated_policies.append(policy_name)
         
-        # Sort + de-dupe overlaps
-        all_matches.sort(key=lambda x: (x[0], x[1]))
+        # Sort + de-dupe overlaps (based on value portion to avoid overlapping annotations)
+        all_matches.sort(key=lambda x: (x[3], x[4]))  # Sort by value_start, value_end
         matches = []
-        last_end = -1
-        for start, end, span, policy, action in all_matches:
-            if start >= last_end:
-                matches.append((start, end, span, policy, action))
-                last_end = end
+        last_value_end = -1
+        for match_start, match_end, matched_text, value_start, value_end, value_span, policy, action in all_matches:
+            if value_start >= last_value_end:
+                matches.append((match_start, match_end, matched_text, value_start, value_end, value_span, policy, action))
+                last_value_end = value_end
         
-        # Build annotations
+        # Build annotations using VALUE portion only (for UI highlighting and SIEM export)
+        # Each annotation records: policy_name, action, start, end, span (all for VALUE portion)
         annotations = [
-            Annotation(span=span, policy_name=policy, action=action, start=start, end=end)
-            for start, end, span, policy, action in matches
+            Annotation(span=value_span, policy_name=policy, action=action, start=value_start, end=value_end)
+            for match_start, match_end, matched_text, value_start, value_end, value_span, policy, action in matches
         ]
         
         # Determine verdict based on actions
@@ -357,9 +449,11 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
             verdict = "REDACTED"
             user_message = "Output has been redacted to remove sensitive information."
             # Apply redactions from end -> start to avoid index drift
-            for start, end, span, policy, action in sorted(matches, key=lambda x: x[0], reverse=True):
+            # Use full match info (match_start, match_end, matched_text) for redaction (preserves key name)
+            for match_start, match_end, matched_text, value_start, value_end, value_span, policy, action in sorted(matches, key=lambda x: x[0], reverse=True):
                 if action == "REDACT":
-                    governed_output = governed_output[:start] + "[REDACTED]" + governed_output[end:]
+                    # Preserve variable names for KEY=VALUE or KEY: VALUE formats
+                    governed_output = apply_redaction(governed_output, match_start, match_end, matched_text)
         
         # Generate events using policy names from DB
         events = [
