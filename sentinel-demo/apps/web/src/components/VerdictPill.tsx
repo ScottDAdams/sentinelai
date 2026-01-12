@@ -12,7 +12,7 @@ export default function VerdictPill({ verdict }: VerdictPillProps) {
     REVIEW: 'bg-purple-100 text-purple-800',
   }
 
-  const displayText = verdict === 'REVIEW' ? 'REVIEW_REQUIRED' : verdict
+  const displayText = verdict === 'REVIEW' ? 'HELD FOR REVIEW' : verdict
 
   return (
     <span

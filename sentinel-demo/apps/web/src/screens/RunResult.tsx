@@ -141,6 +141,78 @@ export default function RunResult() {
               />
             )}
 
+            {/* Why this was held - for REVIEW verdicts */}
+            {verdict === "REVIEW" && data.annotations.length > 0 && (
+              <div className="card card-pad border-purple-200 bg-purple-50">
+                <h3 className="text-sm font-semibold text-gray-900 mb-4">Why this was held</h3>
+                <div className="space-y-4">
+                  {(() => {
+                    // Group annotations by policy
+                    const policyGroups: Record<string, typeof data.annotations> = {};
+                    data.annotations
+                      .filter(a => a.action === "REVIEW")
+                      .forEach(ann => {
+                        if (!policyGroups[ann.policy_name]) {
+                          policyGroups[ann.policy_name] = [];
+                        }
+                        policyGroups[ann.policy_name].push(ann);
+                      });
+
+                    return Object.entries(policyGroups).map(([policyName, anns]) => (
+                      <div key={policyName} className="border-l-2 border-purple-300 pl-3">
+                        <div className="text-sm font-medium text-gray-900 mb-1">
+                          {policyName}
+                        </div>
+                        <div className="text-xs text-gray-600 mb-2">
+                          {anns.length} match{anns.length !== 1 ? "es" : ""} found
+                        </div>
+                        <div className="text-xs text-gray-700 space-y-1">
+                          <div className="font-medium">Matched spans:</div>
+                          <ul className="list-disc list-inside ml-2 space-y-0.5">
+                            {anns.map((ann, idx) => (
+                              <li key={idx} className="font-mono text-xs">
+                                "{ann.span}" (position {ann.start}-{ann.end})
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      </div>
+                    ));
+                  })()}
+                </div>
+              </div>
+            )}
+
+            {/* Recommended remediation - for REVIEW verdicts */}
+            {verdict === "REVIEW" && data.run.meta?.recommended_route && (
+              <div className="card card-pad border-blue-200 bg-blue-50">
+                <h3 className="text-sm font-semibold text-gray-900 mb-4">Recommended remediation</h3>
+                <div className="space-y-3">
+                  <div>
+                    <div className="text-sm text-gray-700 mb-1">
+                      <span className="font-medium">Destination:</span>{" "}
+                      {data.run.meta.recommended_route.name}
+                    </div>
+                    <div className="text-xs text-gray-600">
+                      {data.run.meta.recommended_route.reason}
+                    </div>
+                  </div>
+                  <div className="pt-2 border-t border-blue-200">
+                    <button
+                      type="button"
+                      className="px-4 py-2 text-sm font-medium text-blue-800 bg-blue-100 border border-blue-300 rounded-md hover:bg-blue-200 transition-colors"
+                      onClick={() => alert("Routing simulated in demo. In production, this would route to Contoso Internal LLM.")}
+                    >
+                      Route to {data.run.meta.recommended_route.name} (Simulated)
+                    </button>
+                    <p className="text-xs text-gray-600 mt-2 italic">
+                      Routing simulated in demo
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
             <WhyToggle annotations={data.annotations} />
           </div>
 

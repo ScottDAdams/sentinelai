@@ -642,9 +642,12 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
         elif any(a.action == "REVIEW" for a in annotations):
             verdict = "REVIEW"
             user_message = "This content requires manual review before release."
-            # Replace governed_output with held message (do not echo original content)
+            # Replace governed_output with quarantine placeholder (do not echo original content)
             review_policies = [a.policy_name for a in annotations if a.action == "REVIEW"]
-            governed_output = f"This content is held for review due to policy: {', '.join(set(review_policies))}."
+            unique_review_policies = list(set(review_policies))
+            # Determine queue name based on policy
+            queue_name = "IP Review" if any("Jaguar" in p or "IP" in p for p in unique_review_policies) else "General Review"
+            governed_output = f"This content has been quarantined and held for review due to policy: {', '.join(unique_review_policies)}."
         elif annotations:
             verdict = "REDACTED"
             user_message = "Output has been redacted to remove sensitive information."
@@ -667,6 +670,8 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
         
         # Track review reasons for meta field
         review_reasons = []
+        review_queue_name = None
+        recommended_route = None
         
         if annotations:
             violations = {}
@@ -691,6 +696,18 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
                         "policy_name": ann.policy_name,
                         "matches": 1  # Will be aggregated below
                     })
+                    
+                    # Set queue name and recommended route for REVIEW
+                    if not review_queue_name:
+                        review_queue_name = "IP Review" if ("Jaguar" in ann.policy_name or "IP" in ann.policy_name) else "General Review"
+                    if not recommended_route:
+                        # Determine route reason based on policy
+                        route_reason = f"Bespoke IP policy triggered ({ann.policy_name})" if "Jaguar" in ann.policy_name or "IP" in ann.policy_name else f"Policy triggered ({ann.policy_name})"
+                        recommended_route = {
+                            "destination": "private_llm",
+                            "name": "Contoso Internal LLM",
+                            "reason": route_reason
+                        }
                 
                 # For Sensitivity Label Guard, add reason to payload
                 if ann.policy_name == "Sensitivity Label Guard":
@@ -735,6 +752,21 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
                     "event_type": "Action Applied",
                     "payload": {"action": "REVIEW", "reviews": review_count}
                 })
+                # Add Quarantined event
+                events.append({
+                    "event_type": "Quarantined",
+                    "payload": {"reason": "REVIEW action", "queue": review_queue_name or "General Review"}
+                })
+                # Add Routing Recommended event (simulated)
+                if recommended_route:
+                    events.append({
+                        "event_type": "Routing Recommended",
+                        "payload": {
+                            "destination": recommended_route["destination"],
+                            "name": recommended_route["name"],
+                            "simulated": True
+                        }
+                    })
             
             if any(a.action == "BLOCK" for a in annotations):
                 events.append({
@@ -754,6 +786,10 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
         }
         if review_reasons_aggregated:
             meta["review_reasons"] = list(review_reasons_aggregated.values())
+        if verdict == "REVIEW":
+            meta["review_queue"] = review_queue_name or "General Review"
+            if recommended_route:
+                meta["recommended_route"] = recommended_route
         
         return {
             "baseline_output": baseline_output,
@@ -886,9 +922,12 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
         elif any(a.action == "REVIEW" for a in annotations):
             verdict = "REVIEW"
             user_message = "This content requires manual review before release."
-            # Replace governed_output with held message (do not echo original content)
+            # Replace governed_output with quarantine placeholder (do not echo original content)
             review_policies = [a.policy_name for a in annotations if a.action == "REVIEW"]
-            governed_output = f"This content is held for review due to policy: {', '.join(set(review_policies))}."
+            unique_review_policies = list(set(review_policies))
+            # Determine queue name based on policy
+            queue_name = "IP Review" if any("Jaguar" in p or "IP" in p for p in unique_review_policies) else "General Review"
+            governed_output = f"This content has been quarantined and held for review due to policy: {', '.join(unique_review_policies)}."
         elif annotations:
             verdict = "REDACTED"
             user_message = "Output has been redacted to remove sensitive information."
@@ -907,6 +946,8 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
         
         # Track review reasons for meta field
         review_reasons = []
+        review_queue_name = None
+        recommended_route = None
         
         if annotations:
             violations = {}
@@ -928,6 +969,18 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
                         "policy_name": ann.policy_name,
                         "matches": 1  # Will be aggregated below
                     })
+                    
+                    # Set queue name and recommended route for REVIEW
+                    if not review_queue_name:
+                        review_queue_name = "IP Review" if ("Jaguar" in ann.policy_name or "IP" in ann.policy_name) else "General Review"
+                    if not recommended_route:
+                        # Determine route reason based on policy
+                        route_reason = f"Bespoke IP policy triggered ({ann.policy_name})" if "Jaguar" in ann.policy_name or "IP" in ann.policy_name else f"Policy triggered ({ann.policy_name})"
+                        recommended_route = {
+                            "destination": "private_llm",
+                            "name": "Contoso Internal LLM",
+                            "reason": route_reason
+                        }
             
             for policy_name, count in violations.items():
                 events.append({
@@ -948,6 +1001,21 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
                     "event_type": "Action Applied",
                     "payload": {"action": "REVIEW", "reviews": review_count}
                 })
+                # Add Quarantined event
+                events.append({
+                    "event_type": "Quarantined",
+                    "payload": {"reason": "REVIEW action", "queue": review_queue_name or "General Review"}
+                })
+                # Add Routing Recommended event (simulated)
+                if recommended_route:
+                    events.append({
+                        "event_type": "Routing Recommended",
+                        "payload": {
+                            "destination": recommended_route["destination"],
+                            "name": recommended_route["name"],
+                            "simulated": True
+                        }
+                    })
             
             if any(a.action == "BLOCK" for a in annotations):
                 events.append({
@@ -978,6 +1046,10 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
         }
         if review_reasons_aggregated:
             meta["review_reasons"] = list(review_reasons_aggregated.values())
+        if verdict == "REVIEW":
+            meta["review_queue"] = review_queue_name or "General Review"
+            if recommended_route:
+                meta["recommended_route"] = recommended_route
         
         return {
             "baseline_output": baseline_output,
@@ -1089,9 +1161,12 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
         elif any(a.action == "REVIEW" for a in annotations):
             verdict = "REVIEW"
             user_message = "This content requires manual review before release."
-            # Replace governed_output with held message (do not echo original content)
+            # Replace governed_output with quarantine placeholder (do not echo original content)
             review_policies = [a.policy_name for a in annotations if a.action == "REVIEW"]
-            governed_output = f"This content is held for review due to policy: {', '.join(set(review_policies))}."
+            unique_review_policies = list(set(review_policies))
+            # Determine queue name based on policy
+            queue_name = "IP Review" if any("Jaguar" in p or "IP" in p for p in unique_review_policies) else "General Review"
+            governed_output = f"This content has been quarantined and held for review due to policy: {', '.join(unique_review_policies)}."
         elif annotations:
             verdict = "REDACTED"
             user_message = "Output has been redacted to remove sensitive information."
@@ -1110,6 +1185,8 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
         
         # Track review reasons for meta field
         review_reasons = []
+        review_queue_name = None
+        recommended_route = None
         
         if annotations:
             violations = {}
@@ -1131,6 +1208,18 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
                         "policy_name": ann.policy_name,
                         "matches": 1  # Will be aggregated below
                     })
+                    
+                    # Set queue name and recommended route for REVIEW
+                    if not review_queue_name:
+                        review_queue_name = "IP Review" if ("Jaguar" in ann.policy_name or "IP" in ann.policy_name) else "General Review"
+                    if not recommended_route:
+                        # Determine route reason based on policy
+                        route_reason = f"Bespoke IP policy triggered ({ann.policy_name})" if "Jaguar" in ann.policy_name or "IP" in ann.policy_name else f"Policy triggered ({ann.policy_name})"
+                        recommended_route = {
+                            "destination": "private_llm",
+                            "name": "Contoso Internal LLM",
+                            "reason": route_reason
+                        }
             
             for policy_name, count in violations.items():
                 events.append({
@@ -1151,6 +1240,21 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
                     "event_type": "Action Applied",
                     "payload": {"action": "REVIEW", "reviews": review_count}
                 })
+                # Add Quarantined event
+                events.append({
+                    "event_type": "Quarantined",
+                    "payload": {"reason": "REVIEW action", "queue": review_queue_name or "General Review"}
+                })
+                # Add Routing Recommended event (simulated)
+                if recommended_route:
+                    events.append({
+                        "event_type": "Routing Recommended",
+                        "payload": {
+                            "destination": recommended_route["destination"],
+                            "name": recommended_route["name"],
+                            "simulated": True
+                        }
+                    })
             
             if any(a.action == "BLOCK" for a in annotations):
                 events.append({
@@ -1181,6 +1285,10 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
         }
         if review_reasons_aggregated:
             meta["review_reasons"] = list(review_reasons_aggregated.values())
+        if verdict == "REVIEW":
+            meta["review_queue"] = review_queue_name or "General Review"
+            if recommended_route:
+                meta["recommended_route"] = recommended_route
     
     return {
         "baseline_output": baseline_output,
