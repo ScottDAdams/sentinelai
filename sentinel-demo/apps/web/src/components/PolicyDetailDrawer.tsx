@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import type { Policy } from '@shared/types'
 
 interface PolicyDetailDrawerProps {
@@ -10,22 +10,55 @@ function getPolicyType(policy: Policy): 'STOCK' | 'BESPOKE' {
   return policy.updated_by === 'demo_admin' ? 'STOCK' : 'BESPOKE'
 }
 
-function renderConditions(conditions: Record<string, any>) {
-  const hasKeywords = Array.isArray(conditions.keywords) && conditions.keywords.length > 0
-  const hasPhrases = Array.isArray(conditions.phrases) && conditions.phrases.length > 0
-  const hasPatterns = Array.isArray(conditions.patterns) && conditions.patterns.length > 0
-  const hasLabels = Array.isArray(conditions.labels) && conditions.labels.length > 0
-  const hasWorkloads = Array.isArray(conditions.workloads) && conditions.workloads.length > 0
+// Parse conditions safely - handle both jsonb object and stringified JSON
+function parseConditions(conditions: any): Record<string, any> {
+  if (!conditions) return {}
+  
+  // If it's already an object, return it
+  if (typeof conditions === 'object' && !Array.isArray(conditions)) {
+    return conditions
+  }
+  
+  // If it's a string, try to parse it
+  if (typeof conditions === 'string') {
+    try {
+      return JSON.parse(conditions)
+    } catch (e) {
+      console.warn('Failed to parse conditions as JSON:', e)
+      return {}
+    }
+  }
+  
+  return {}
+}
+
+function copyToClipboard(text: string) {
+  navigator.clipboard.writeText(text).then(() => {
+    // Could add a toast notification here
+  }).catch(err => {
+    console.error('Failed to copy:', err)
+  })
+}
+
+function renderPolicyLogic(conditions: Record<string, any>) {
+  const parsed = parseConditions(conditions)
+  
+  const hasKeywords = Array.isArray(parsed.keywords) && parsed.keywords.length > 0
+  const hasPhrases = Array.isArray(parsed.phrases) && parsed.phrases.length > 0
+  const hasPatterns = Array.isArray(parsed.patterns) && parsed.patterns.length > 0
+  const hasLabels = Array.isArray(parsed.labels) && parsed.labels.length > 0
+  const hasWorkloads = Array.isArray(parsed.workloads) && parsed.workloads.length > 0
+  const requiresAggregation = parsed.requires_aggregation === true
 
   // If we have structured fields, render them nicely
-  if (hasKeywords || hasPhrases || hasPatterns || hasLabels || hasWorkloads) {
+  if (hasKeywords || hasPhrases || hasPatterns || hasLabels || hasWorkloads || requiresAggregation) {
     return (
       <div className="space-y-4">
         {hasKeywords && (
           <div>
             <div className="text-sm font-medium text-gray-700 mb-2">Keywords</div>
             <ul className="list-disc list-inside space-y-1 text-sm text-gray-900">
-              {conditions.keywords.map((keyword: string, idx: number) => (
+              {parsed.keywords.map((keyword: string, idx: number) => (
                 <li key={idx} className="font-mono">{keyword}</li>
               ))}
             </ul>
@@ -35,7 +68,7 @@ function renderConditions(conditions: Record<string, any>) {
           <div>
             <div className="text-sm font-medium text-gray-700 mb-2">Phrases</div>
             <ul className="list-disc list-inside space-y-1 text-sm text-gray-900">
-              {conditions.phrases.map((phrase: string, idx: number) => (
+              {parsed.phrases.map((phrase: string, idx: number) => (
                 <li key={idx}>{phrase}</li>
               ))}
             </ul>
@@ -44,9 +77,22 @@ function renderConditions(conditions: Record<string, any>) {
         {hasPatterns && (
           <div>
             <div className="text-sm font-medium text-gray-700 mb-2">Patterns (Regex)</div>
-            <ul className="list-disc list-inside space-y-1 text-sm text-gray-900">
-              {conditions.patterns.map((pattern: string, idx: number) => (
-                <li key={idx} className="font-mono text-xs break-all">{pattern}</li>
+            <ul className="space-y-2">
+              {parsed.patterns.map((pattern: string, idx: number) => (
+                <li key={idx} className="flex items-start gap-2">
+                  <code className="flex-1 bg-gray-50 px-3 py-2 rounded text-xs font-mono text-gray-800 break-all">
+                    {pattern}
+                  </code>
+                  <button
+                    onClick={() => copyToClipboard(pattern)}
+                    className="flex-shrink-0 px-2 py-1 text-xs text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded transition-colors"
+                    title="Copy pattern"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                    </svg>
+                  </button>
+                </li>
               ))}
             </ul>
           </div>
@@ -55,7 +101,7 @@ function renderConditions(conditions: Record<string, any>) {
           <div>
             <div className="text-sm font-medium text-gray-700 mb-2">Labels</div>
             <ul className="list-disc list-inside space-y-1 text-sm text-gray-900">
-              {conditions.labels.map((label: string, idx: number) => (
+              {parsed.labels.map((label: string, idx: number) => (
                 <li key={idx}>{label}</li>
               ))}
             </ul>
@@ -65,10 +111,18 @@ function renderConditions(conditions: Record<string, any>) {
           <div>
             <div className="text-sm font-medium text-gray-700 mb-2">Workloads</div>
             <ul className="list-disc list-inside space-y-1 text-sm text-gray-900">
-              {conditions.workloads.map((workload: string, idx: number) => (
+              {parsed.workloads.map((workload: string, idx: number) => (
                 <li key={idx}>{workload}</li>
               ))}
             </ul>
+          </div>
+        )}
+        {requiresAggregation && (
+          <div>
+            <div className="text-sm font-medium text-gray-700 mb-2">Aggregation Detection</div>
+            <p className="text-sm text-gray-600">
+              Flags files that appear to contain aggregated compensation/HR data
+            </p>
           </div>
         )}
       </div>
@@ -78,9 +132,26 @@ function renderConditions(conditions: Record<string, any>) {
   // Otherwise, render as pretty-printed JSON
   return (
     <pre className="bg-gray-50 p-4 rounded-lg text-sm font-mono text-gray-800 overflow-x-auto">
-      {JSON.stringify(conditions, null, 2)}
+      {JSON.stringify(parsed, null, 2)}
     </pre>
   )
+}
+
+// Hardcoded "Why it exists" explanations for STOCK policies (UI-only help text)
+const STOCK_POLICY_EXPLANATIONS: Record<string, string> = {
+  'sensitive-data': 'Detects and protects personally identifiable information (PII) including Social Security Numbers, email addresses, and phone numbers to comply with privacy regulations.',
+  'secrets-detection': 'Identifies exposed API keys, tokens, passwords, and other sensitive credentials in code and configuration files to prevent security breaches.',
+  'prompt-injection': 'Blocks attempts to manipulate AI systems through prompt injection attacks that could override safety instructions or extract sensitive information.',
+  'confidential-data': 'Protects confidential business information such as compensation data, HR records, and other sensitive organizational data from unauthorized disclosure.',
+  'confidential-file': 'Flags files containing confidential information based on content analysis and metadata to ensure proper handling and access controls.',
+  'sensitivity-label-guard': 'Requires manual review for Copilot interactions involving confidential sensitivity labels or compliance flags indicating financial or executive-level discussions to ensure appropriate governance.',
+}
+
+function getPolicyExplanation(policyId: string, policyType: 'STOCK' | 'BESPOKE'): string | null {
+  if (policyType === 'STOCK' && STOCK_POLICY_EXPLANATIONS[policyId]) {
+    return STOCK_POLICY_EXPLANATIONS[policyId]
+  }
+  return null
 }
 
 export default function PolicyDetailDrawer({ policy, onClose }: PolicyDetailDrawerProps) {
@@ -200,10 +271,21 @@ export default function PolicyDetailDrawer({ policy, onClose }: PolicyDetailDraw
               <div className="text-xs text-gray-500 mt-1">by {policy.updated_by}</div>
             </div>
 
-            {/* Conditions */}
+            {/* Why it exists (STOCK policies only) */}
+            {getPolicyExplanation(policy.id, policyType) && (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <div className="text-sm font-medium text-gray-700 mb-2">Why it exists</div>
+                <p className="text-sm text-gray-600">{getPolicyExplanation(policy.id, policyType)}</p>
+                <p className="text-xs text-gray-500 mt-2 italic">
+                  (UI-only help text, not enforcement logic)
+                </p>
+              </div>
+            )}
+
+            {/* Policy Logic */}
             <div>
-              <div className="text-sm font-medium text-gray-700 mb-3">Conditions</div>
-              {renderConditions(policy.conditions || {})}
+              <div className="text-sm font-medium text-gray-700 mb-3">Policy Logic</div>
+              {renderPolicyLogic(policy.conditions || {})}
             </div>
 
             {/* Audit note */}

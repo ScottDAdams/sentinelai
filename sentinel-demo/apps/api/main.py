@@ -373,6 +373,8 @@ def evaluate_copilot_policies(json_content: str, policies: List[dict]) -> tuple:
         labels = conditions.get("labels", [])  # List of sensitivity labels to match
         workloads = conditions.get("workloads", [])  # List of workloads to match
         keywords = conditions.get("keywords", [])  # List of keywords to match against compliance_flags or other fields
+        sensitivity_label_contains = conditions.get("sensitivity_label_contains", [])  # List of strings to check in sensitivity_label
+        compliance_flags_include = conditions.get("compliance_flags_include", [])  # List of flags to check in compliance_flags
         
         policy_matched = False
         
@@ -390,7 +392,7 @@ def evaluate_copilot_policies(json_content: str, policies: List[dict]) -> tuple:
         }
         print(f"[POLICY_EVAL] {json.dumps(debug_info)}")
         
-        # Check sensitivity label match
+        # Check sensitivity label match (using labels condition)
         if labels and sensitivity_label:
             for label_pattern in labels:
                 if label_pattern.lower() in sensitivity_label.lower():
@@ -412,6 +414,54 @@ def evaluate_copilot_policies(json_content: str, policies: List[dict]) -> tuple:
                         matches.append((match_start, match_end, matched_text, value_start, value_end, value_span, policy_name, policy_action))
                         policy_matched = True
                     break
+        
+        # Check sensitivity_label_contains condition (for policies like Sensitivity Label Guard)
+        if sensitivity_label_contains and sensitivity_label:
+            for pattern in sensitivity_label_contains:
+                if pattern.lower() in sensitivity_label.lower():
+                    # Find position of sensitivity_label value
+                    pos = find_json_value_position(json_content, copilot_data, "sensitivity_label")
+                    if pos:
+                        match_start, match_end = pos
+                        matched_text = json_content[match_start:match_end]
+                        if matched_text.startswith('"') and matched_text.endswith('"'):
+                            value_start = match_start + 1
+                            value_end = match_end - 1
+                            value_span = matched_text[1:-1]
+                        else:
+                            value_start = match_start
+                            value_end = match_end
+                            value_span = matched_text
+                        
+                        matches.append((match_start, match_end, matched_text, value_start, value_end, value_span, policy_name, policy_action))
+                        policy_matched = True
+                        break
+        
+        # Check compliance_flags_include condition (for policies like Sensitivity Label Guard)
+        if compliance_flags_include and compliance_flags:
+            for required_flag in compliance_flags_include:
+                if required_flag.lower() in [flag.lower() for flag in compliance_flags]:
+                    # Find the matching flag in the array
+                    matching_flag = next((f for f in compliance_flags if required_flag.lower() in f.lower()), None)
+                    if matching_flag:
+                        flag_index = compliance_flags.index(matching_flag)
+                        field_path = f"compliance_flags.{flag_index}"
+                        pos = find_json_value_position(json_content, copilot_data, field_path)
+                        if pos:
+                            match_start, match_end = pos
+                            matched_text = json_content[match_start:match_end]
+                            if matched_text.startswith('"') and matched_text.endswith('"'):
+                                value_start = match_start + 1
+                                value_end = match_end - 1
+                                value_span = matched_text[1:-1]
+                            else:
+                                value_start = match_start
+                                value_end = match_end
+                                value_span = matched_text
+                            
+                            matches.append((match_start, match_end, matched_text, value_start, value_end, value_span, policy_name, policy_action))
+                            policy_matched = True
+                            break
         
         # Check workload match
         if workloads and workload:
@@ -615,15 +665,30 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
         
         if annotations:
             violations = {}
+            violation_reasons = {}  # Track why each policy triggered
+            
             for ann in annotations:
                 if ann.policy_name not in violations:
                     violations[ann.policy_name] = 0
+                    violation_reasons[ann.policy_name] = []
                 violations[ann.policy_name] += 1
+                
+                # For Sensitivity Label Guard, add reason to payload
+                if ann.policy_name == "Sensitivity Label Guard":
+                    # Try to determine why it triggered from the annotation span
+                    if "Confidential" in ann.span:
+                        violation_reasons[ann.policy_name].append("sensitivity_label_contains_confidential")
+                    elif ann.span in ["financial_data", "executive_discussion"]:
+                        violation_reasons[ann.policy_name].append(f"compliance_flag_{ann.span}")
             
             for policy_name, count in violations.items():
+                payload = {"policy": policy_name, "matches": count}
+                # Add reason for Sensitivity Label Guard
+                if policy_name == "Sensitivity Label Guard" and violation_reasons[policy_name]:
+                    payload["triggered_by"] = list(set(violation_reasons[policy_name]))
                 events.append({
                     "event_type": "Violation Detected",
-                    "payload": {"policy": policy_name, "matches": count}
+                    "payload": payload
                 })
             
             redact_count = sum(1 for a in annotations if a.action == "REDACT")
