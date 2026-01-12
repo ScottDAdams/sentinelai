@@ -566,7 +566,20 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
         policies = load_policies(policy_pack_version)
         
         # Filter policies that apply to copilot input type
-        copilot_policies = [p for p in policies if input_type in p.get("scope", [])]
+        # Ensure scope is treated as a list (handle both list and string formats)
+        copilot_policies = []
+        for p in policies:
+            scope = p.get("scope", [])
+            # Handle case where scope might be stored as a string or list
+            if isinstance(scope, str):
+                scope = [scope]
+            if input_type in scope:
+                copilot_policies.append(p)
+        
+        # Log policy filtering for debugging
+        print(f"[POLICY_FILTER] input_type='{input_type}', total_policies={len(policies)}, applicable_policies={len(copilot_policies)}")
+        if copilot_policies:
+            print(f"[POLICY_FILTER] applicable_policy_names={[p['name'] for p in copilot_policies]}")
         
         # Evaluate policies against structured fields
         annotations, evaluated_policies, matches = evaluate_copilot_policies(input_content, copilot_policies)
@@ -652,13 +665,26 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
         # Load policies from Supabase (no caching - fresh on each run)
         policies = load_policies(policy_pack_version)
         
+        # Filter policies by scope - ensure copilot is treated as first-class input type
+        applicable_policies = []
+        for policy in policies:
+            scope = policy.get("scope", [])
+            # Handle case where scope might be stored as a string or list
+            if isinstance(scope, str):
+                scope = [scope]
+            if input_type in scope:
+                applicable_policies.append(policy)
+        
+        # Log policy filtering for debugging
+        print(f"[POLICY_FILTER] input_type='{input_type}', total_policies={len(policies)}, applicable_policies={len(applicable_policies)}")
+        if applicable_policies:
+            print(f"[POLICY_FILTER] applicable_policy_names={[p['name'] for p in applicable_policies]}")
+        
         evaluated_policies = []
         all_matches = []
         
         # Evaluate each enabled policy that matches the input_type scope
-        for policy in policies:
-            if input_type not in policy["scope"]:
-                continue  # Skip policies that don't apply to this input type
+        for policy in applicable_policies:
             
             policy_id = policy["id"]
             policy_name = policy["name"]
@@ -825,13 +851,26 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
         # Load policies from Supabase (no caching - fresh on each run)
         policies = load_policies(policy_pack_version)
         
+        # Filter policies by scope - ensure copilot is treated as first-class input type
+        applicable_policies = []
+        for policy in policies:
+            scope = policy.get("scope", [])
+            # Handle case where scope might be stored as a string or list
+            if isinstance(scope, str):
+                scope = [scope]
+            if input_type in scope:
+                applicable_policies.append(policy)
+        
+        # Log policy filtering for debugging
+        print(f"[POLICY_FILTER] input_type='{input_type}', scenario_id='{scenario_id}', total_policies={len(policies)}, applicable_policies={len(applicable_policies)}")
+        if applicable_policies:
+            print(f"[POLICY_FILTER] applicable_policy_names={[p['name'] for p in applicable_policies]}")
+        
         evaluated_policies = []
         all_matches = []
         
         # Evaluate each enabled policy that matches the input_type scope
-        for policy in policies:
-            if input_type not in policy["scope"]:
-                continue  # Skip policies that don't apply to this input type
+        for policy in applicable_policies:
             
             policy_id = policy["id"]
             policy_name = policy["name"]
