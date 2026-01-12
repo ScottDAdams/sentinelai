@@ -5,6 +5,7 @@ import { SLACK_DUMP } from "./slack_dump";
 import { ENV_LEAK } from "./env_leak";
 import { APP_LOGS } from "./app_logs";
 import { M365_COPILOT } from "./m365_copilot";
+import { PROJECT_JAGUAR_CHAT } from "./project_jaguar_chat";
 
 export type DemoSample = {
   id: string;
@@ -37,6 +38,12 @@ export const DEMO_SAMPLES: DemoSample[] = [
     label: "Slack Dump (Credential Leak)",
     input_type: "chat",
     content: SLACK_DUMP,
+  },
+  {
+    id: "project-jaguar",
+    label: "Project Jaguar (Custom IP Policy)",
+    input_type: "chat",
+    content: PROJECT_JAGUAR_CHAT,
   },
   {
     id: "env-leak",
