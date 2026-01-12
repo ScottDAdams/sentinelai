@@ -57,7 +57,7 @@ export interface Policy {
 export interface CreateRunRequest {
   input_type: InputType;
   input_content: string;
-  scenario_id?: 'pii_chat' | 'file_comp' | 'code_secret' | 'injection';
+  // Scenarios are auto-detected by policy engine; manual overrides intentionally omitted.
 }
 
 export interface CreateRunResponse {

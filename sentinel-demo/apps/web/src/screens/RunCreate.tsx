@@ -11,7 +11,6 @@ export default function RunCreate() {
   const navigate = useNavigate()
   const [inputType, setInputType] = useState<InputType>('chat')
   const [inputContent, setInputContent] = useState('')
-  const [scenarioId, setScenarioId] = useState<'pii_chat' | 'file_comp' | 'code_secret' | 'injection' | ''>('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [selectedSampleId, setSelectedSampleId] = useState<string>('')
@@ -23,7 +22,6 @@ export default function RunCreate() {
     if (sample) {
       setInputType(sample.input_type)
       setInputContent(sample.content)
-      setScenarioId('') // Clear any scenario override
       setSelectedSampleId('') // Reset dropdown after loading
     }
   }
@@ -39,10 +37,10 @@ export default function RunCreate() {
     setError(null)
 
     try {
+      // Scenarios are auto-detected by policy engine; manual overrides intentionally omitted.
       const response = await api.createRun({
         input_type: inputType,
         input_content: inputContent,
-        scenario_id: scenarioId || undefined,
       })
       navigate(`/runs/${response.run_id}`)
     } catch (err) {
@@ -79,23 +77,6 @@ export default function RunCreate() {
                 </label>
               ))}
             </div>
-          </div>
-  
-          <div className="bg-white rounded-lg border border-gray-200 p-6">
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Scenario (Optional - for demo)
-            </label>
-            <select
-              value={scenarioId}
-              onChange={(e) => setScenarioId(e.target.value as typeof scenarioId)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
-            >
-              <option value="">Auto-detect</option>
-              <option value="pii_chat">PII Chat</option>
-              <option value="file_comp">Compensation File</option>
-              <option value="code_secret">Code Secret</option>
-              <option value="injection">Injection</option>
-            </select>
           </div>
 
           <div className="bg-white rounded-lg border border-gray-200 p-6">
