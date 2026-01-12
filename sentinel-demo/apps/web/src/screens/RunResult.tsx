@@ -66,13 +66,22 @@ export default function RunResult() {
       ? "bg-red-50 border-red-200"
       : verdict === "REDACTED"
       ? "bg-amber-50 border-amber-200"
+      : verdict === "REVIEW"
+      ? "bg-purple-50 border-purple-200"
       : "bg-emerald-50 border-emerald-200";
+
+  // Get review policy name from annotations
+  const reviewPolicyName = verdict === "REVIEW" && data.annotations.length > 0
+    ? data.annotations.find(a => a.action === "REVIEW")?.policy_name || "Policy"
+    : null;
 
   const verdictTitle =
     verdict === "BLOCKED"
       ? "Blocked"
       : verdict === "REDACTED"
       ? "Released with redactions"
+      : verdict === "REVIEW"
+      ? `Held for review${reviewPolicyName ? ` (${reviewPolicyName})` : ""}`
       : "Shippable";
 
   return (
@@ -123,7 +132,7 @@ export default function RunResult() {
               annotations={data.annotations}
             />
 
-            {/* Baseline only when it matters */}
+            {/* Baseline only when it matters (show for non-shippable verdicts) */}
             {data.run.verdict !== "SHIPPABLE" && (
               <OutputBlock
                 title="Baseline Output"

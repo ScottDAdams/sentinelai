@@ -12,11 +12,13 @@ export default function VerdictPill({ verdict }: VerdictPillProps) {
     REVIEW: 'bg-purple-100 text-purple-800',
   }
 
+  const displayText = verdict === 'REVIEW' ? 'REVIEW_REQUIRED' : verdict
+
   return (
     <span
       className={`px-3 py-1 text-xs font-semibold rounded-full ${styles[verdict]}`}
     >
-      {verdict}
+      {displayText}
     </span>
   )
 }

@@ -642,7 +642,9 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
         elif any(a.action == "REVIEW" for a in annotations):
             verdict = "REVIEW"
             user_message = "This content requires manual review before release."
-            # Don't modify output for REVIEW - keep original
+            # Replace governed_output with held message (do not echo original content)
+            review_policies = [a.policy_name for a in annotations if a.action == "REVIEW"]
+            governed_output = f"This content is held for review due to policy: {', '.join(set(review_policies))}."
         elif annotations:
             verdict = "REDACTED"
             user_message = "Output has been redacted to remove sensitive information."
@@ -663,6 +665,9 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
             {"event_type": "Policy Evaluated", "payload": {"policies": evaluated_policies}},
         ]
         
+        # Track review reasons for meta field
+        review_reasons = []
+        
         if annotations:
             violations = {}
             violation_reasons = {}  # Track why each policy triggered
@@ -673,6 +678,20 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
                     violation_reasons[ann.policy_name] = []
                 violations[ann.policy_name] += 1
                 
+                # Track review reasons
+                if ann.action == "REVIEW":
+                    # Find policy ID from copilot_policies list
+                    policy_id = None
+                    for p in copilot_policies:
+                        if p["name"] == ann.policy_name:
+                            policy_id = p["id"]
+                            break
+                    review_reasons.append({
+                        "policy_id": policy_id or "unknown",
+                        "policy_name": ann.policy_name,
+                        "matches": 1  # Will be aggregated below
+                    })
+                
                 # For Sensitivity Label Guard, add reason to payload
                 if ann.policy_name == "Sensitivity Label Guard":
                     # Try to determine why it triggered from the annotation span
@@ -680,6 +699,18 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
                         violation_reasons[ann.policy_name].append("sensitivity_label_contains_confidential")
                     elif ann.span in ["financial_data", "executive_discussion"]:
                         violation_reasons[ann.policy_name].append(f"compliance_flag_{ann.span}")
+            
+            # Aggregate review reasons by policy
+            review_reasons_aggregated = {}
+            for reason in review_reasons:
+                key = reason["policy_id"]
+                if key not in review_reasons_aggregated:
+                    review_reasons_aggregated[key] = {
+                        "policy_id": reason["policy_id"],
+                        "policy_name": reason["policy_name"],
+                        "matches": 0
+                    }
+                review_reasons_aggregated[key]["matches"] += 1
             
             for policy_name, count in violations.items():
                 payload = {"policy": policy_name, "matches": count}
@@ -716,6 +747,14 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
             "payload": {"verdict": verdict}
         })
         
+        # Build meta with review information
+        meta = {
+            "annotations": [a.dict() for a in annotations],
+            "review_required": verdict == "REVIEW",
+        }
+        if review_reasons_aggregated:
+            meta["review_reasons"] = list(review_reasons_aggregated.values())
+        
         return {
             "baseline_output": baseline_output,
             "governed_output": governed_output,
@@ -723,6 +762,7 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
             "user_message": user_message,
             "annotations": annotations,
             "events": events,
+            "meta": meta,
         }
     
     # If no scenario_id provided, evaluate all policies from Supabase based on their patterns
@@ -846,7 +886,9 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
         elif any(a.action == "REVIEW" for a in annotations):
             verdict = "REVIEW"
             user_message = "This content requires manual review before release."
-            # Don't modify output for REVIEW - keep original
+            # Replace governed_output with held message (do not echo original content)
+            review_policies = [a.policy_name for a in annotations if a.action == "REVIEW"]
+            governed_output = f"This content is held for review due to policy: {', '.join(set(review_policies))}."
         elif annotations:
             verdict = "REDACTED"
             user_message = "Output has been redacted to remove sensitive information."
@@ -863,12 +905,29 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
             {"event_type": "Policy Evaluated", "payload": {"policies": evaluated_policies}},
         ]
         
+        # Track review reasons for meta field
+        review_reasons = []
+        
         if annotations:
             violations = {}
             for ann in annotations:
                 if ann.policy_name not in violations:
                     violations[ann.policy_name] = 0
                 violations[ann.policy_name] += 1
+                
+                # Track review reasons
+                if ann.action == "REVIEW":
+                    # Find policy ID from applicable_policies list
+                    policy_id = None
+                    for p in applicable_policies:
+                        if p["name"] == ann.policy_name:
+                            policy_id = p["id"]
+                            break
+                    review_reasons.append({
+                        "policy_id": policy_id or "unknown",
+                        "policy_name": ann.policy_name,
+                        "matches": 1  # Will be aggregated below
+                    })
             
             for policy_name, count in violations.items():
                 events.append({
@@ -901,6 +960,25 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
             "payload": {"verdict": verdict}
         })
         
+        # Build meta with review information
+        review_reasons_aggregated = {}
+        for reason in review_reasons:
+            key = reason["policy_id"]
+            if key not in review_reasons_aggregated:
+                review_reasons_aggregated[key] = {
+                    "policy_id": reason["policy_id"],
+                    "policy_name": reason["policy_name"],
+                    "matches": 0
+                }
+            review_reasons_aggregated[key]["matches"] += 1
+        
+        meta = {
+            "annotations": [a.dict() for a in annotations],
+            "review_required": verdict == "REVIEW",
+        }
+        if review_reasons_aggregated:
+            meta["review_reasons"] = list(review_reasons_aggregated.values())
+        
         return {
             "baseline_output": baseline_output,
             "governed_output": governed_output,
@@ -908,6 +986,7 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
             "user_message": user_message,
             "annotations": annotations,
             "events": events,
+            "meta": meta,
         }
     
     # Explicit scenario handling (only when scenario_id is provided)
@@ -1010,7 +1089,9 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
         elif any(a.action == "REVIEW" for a in annotations):
             verdict = "REVIEW"
             user_message = "This content requires manual review before release."
-            # Don't modify output for REVIEW - keep original
+            # Replace governed_output with held message (do not echo original content)
+            review_policies = [a.policy_name for a in annotations if a.action == "REVIEW"]
+            governed_output = f"This content is held for review due to policy: {', '.join(set(review_policies))}."
         elif annotations:
             verdict = "REDACTED"
             user_message = "Output has been redacted to remove sensitive information."
@@ -1027,12 +1108,29 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
             {"event_type": "Policy Evaluated", "payload": {"policies": evaluated_policies}},
         ]
         
+        # Track review reasons for meta field
+        review_reasons = []
+        
         if annotations:
             violations = {}
             for ann in annotations:
                 if ann.policy_name not in violations:
                     violations[ann.policy_name] = 0
                 violations[ann.policy_name] += 1
+                
+                # Track review reasons
+                if ann.action == "REVIEW":
+                    # Find policy ID from applicable_policies list
+                    policy_id = None
+                    for p in applicable_policies:
+                        if p["name"] == ann.policy_name:
+                            policy_id = p["id"]
+                            break
+                    review_reasons.append({
+                        "policy_id": policy_id or "unknown",
+                        "policy_name": ann.policy_name,
+                        "matches": 1  # Will be aggregated below
+                    })
             
             for policy_name, count in violations.items():
                 events.append({
@@ -1064,6 +1162,25 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
             "event_type": "Final Output Released",
             "payload": {"verdict": verdict}
         })
+        
+        # Build meta with review information
+        review_reasons_aggregated = {}
+        for reason in review_reasons:
+            key = reason["policy_id"]
+            if key not in review_reasons_aggregated:
+                review_reasons_aggregated[key] = {
+                    "policy_id": reason["policy_id"],
+                    "policy_name": reason["policy_name"],
+                    "matches": 0
+                }
+            review_reasons_aggregated[key]["matches"] += 1
+        
+        meta = {
+            "annotations": [a.dict() for a in annotations],
+            "review_required": verdict == "REVIEW",
+        }
+        if review_reasons_aggregated:
+            meta["review_reasons"] = list(review_reasons_aggregated.values())
     
     return {
         "baseline_output": baseline_output,
@@ -1072,6 +1189,7 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
         "user_message": user_message,
         "annotations": annotations,
         "events": events,
+        "meta": meta,
     }
 
 
@@ -1099,6 +1217,11 @@ async def create_run(request: CreateRunRequest):
     input_preview = request.input_content[:100] + ("..." if len(request.input_content) > 100 else "")
     
     # Insert run
+    # Build meta field with annotations and review information
+    meta = {"annotations": [a.dict() for a in result["annotations"]]}
+    if "meta" in result:
+        meta.update(result["meta"])
+    
     run_data = {
         "id": run_id,
         "created_at": created_at,
@@ -1111,7 +1234,7 @@ async def create_run(request: CreateRunRequest):
         "governed_output": result["governed_output"],
         "user_message": result["user_message"],
         "policy_pack_version": "v1",
-        "meta": {"annotations": [a.dict() for a in result["annotations"]]}
+        "meta": meta
     }
     
     supabase.table("runs").insert(run_data).execute()
