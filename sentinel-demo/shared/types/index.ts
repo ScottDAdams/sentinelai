@@ -1,7 +1,7 @@
 // Shared TypeScript types for Sentinel Demo
 
-export type InputType = 'chat' | 'file' | 'code';
-export type Verdict = 'SHIPPABLE' | 'REDACTED' | 'BLOCKED';
+export type InputType = 'chat' | 'file' | 'code' | 'copilot';
+export type Verdict = 'SHIPPABLE' | 'REDACTED' | 'BLOCKED' | 'REVIEW';
 export type PolicyStatus = 'ENABLED' | 'DISABLED';
 export type EventType = 
   | 'Input Sanitized'
@@ -13,7 +13,7 @@ export type EventType =
 export interface Annotation {
   span: string;
   policy_name: string;
-  action: 'REDACT' | 'BLOCK';
+  action: 'REDACT' | 'BLOCK' | 'REVIEW';
   start: number;
   end: number;
 }

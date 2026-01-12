@@ -9,6 +9,7 @@ export default function VerdictPill({ verdict }: VerdictPillProps) {
     SHIPPABLE: 'bg-green-100 text-green-800',
     REDACTED: 'bg-yellow-100 text-yellow-800',
     BLOCKED: 'bg-red-100 text-red-800',
+    REVIEW: 'bg-purple-100 text-purple-800',
   }
 
   return (

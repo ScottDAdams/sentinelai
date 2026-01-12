@@ -137,20 +137,20 @@ def apply_redaction(content: str, start: int, end: int, matched_text: str) -> st
 class Annotation(BaseModel):
     span: str
     policy_name: str
-    action: str = Field(..., pattern="^(REDACT|BLOCK)$")
+    action: str = Field(..., pattern="^(REDACT|BLOCK|REVIEW)$")
     start: int
     end: int
 
 
 class CreateRunRequest(BaseModel):
-    input_type: str = Field(..., pattern="^(chat|file|code)$")
+    input_type: str = Field(..., pattern="^(chat|file|code|copilot)$")
     input_content: str
     scenario_id: Optional[str] = Field(None, pattern="^(pii_chat|file_comp|code_secret|injection)$")
 
 
 class CreateRunResponse(BaseModel):
     run_id: str
-    verdict: str = Field(..., pattern="^(SHIPPABLE|REDACTED|BLOCKED)$")
+    verdict: str = Field(..., pattern="^(SHIPPABLE|REDACTED|BLOCKED|REVIEW)$")
     user_message: str
     baseline_output: str
     governed_output: str
@@ -211,6 +211,343 @@ class GetPoliciesResponse(BaseModel):
     policies: List[Policy]
 
 
+# Helper function to find JSON value position in original string
+def find_json_value_position(json_str: str, json_obj: dict, field_path: str) -> Optional[tuple]:
+    """
+    Find the start and end position of a JSON value in the original JSON string.
+    
+    Args:
+        json_str: The original JSON string
+        json_obj: The parsed JSON object
+        field_path: Dot-separated path to the field (e.g., "sensitivity_label", "user.department", "compliance_flags.0")
+    
+    Returns:
+        Tuple of (start, end) positions, or None if not found
+    """
+    import re
+    try:
+        # Navigate to the field value to verify it exists
+        parts = field_path.split('.')
+        value = json_obj
+        for part in parts:
+            if isinstance(value, list):
+                value = value[int(part)]
+            else:
+                value = value[part]
+        
+        # Build regex pattern to find the field path in JSON
+        # For nested paths like "user.department", we need to find "user": {... "department": ...}
+        if len(parts) == 1:
+            # Simple case: top-level field
+            field_name = parts[0]
+            pattern = f'"{re.escape(field_name)}"\\s*:\\s*'
+            match = re.search(pattern, json_str)
+            if not match:
+                return None
+            match_start_pos = match.start()
+            match_end_pos = match.end()
+        else:
+            # Nested case: find parent object, then field
+            # For "user.department", search for "user": {... "department": ...}
+            parent_field = parts[0]
+            field_name = parts[-1]
+            # Find parent object, then search within it for the field
+            parent_pattern = f'"{re.escape(parent_field)}"\\s*:\\s*\\{{'
+            parent_match = re.search(parent_pattern, json_str)
+            if not parent_match:
+                return None
+            # Search for the field within the parent object
+            parent_start = parent_match.end() - 1  # Include the opening brace
+            # Find the matching closing brace for the parent object
+            brace_count = 1
+            parent_end = parent_start + 1
+            while parent_end < len(json_str) and brace_count > 0:
+                if json_str[parent_end] == '{':
+                    brace_count += 1
+                elif json_str[parent_end] == '}':
+                    brace_count -= 1
+                parent_end += 1
+            # Search for field within parent object bounds
+            pattern = f'"{re.escape(field_name)}"\\s*:\\s*'
+            match = re.search(pattern, json_str[parent_start:parent_end])
+            if not match:
+                return None
+            match_start_pos = parent_start + match.start()
+            match_end_pos = parent_start + match.end()
+        
+        # Find the value after the colon
+        value_start = match_end_pos
+        # Skip whitespace
+        while value_start < len(json_str) and json_str[value_start] in ' \t\n\r':
+            value_start += 1
+        
+        if value_start >= len(json_str):
+            return None
+        
+        # Parse forward to find the end of the value
+        if json_str[value_start] == '"':
+            # String value - find closing quote (handling escapes)
+            end_quote = value_start + 1
+            while end_quote < len(json_str):
+                if json_str[end_quote] == '"' and json_str[end_quote - 1] != '\\':
+                    return (value_start, end_quote + 1)
+                elif json_str[end_quote] == '"' and json_str[end_quote - 1] == '\\' and json_str[end_quote - 2] == '\\':
+                    # Double backslash before quote - this is the end
+                    return (value_start, end_quote + 1)
+                end_quote += 1
+            return None
+        elif json_str[value_start] == '[':
+            # Array value - find matching bracket
+            bracket_count = 1
+            pos = value_start + 1
+            while pos < len(json_str) and bracket_count > 0:
+                if json_str[pos] == '[':
+                    bracket_count += 1
+                elif json_str[pos] == ']':
+                    bracket_count -= 1
+                pos += 1
+            return (value_start, pos) if bracket_count == 0 else None
+        elif json_str[value_start] == '{':
+            # Object value - find matching brace
+            brace_count = 1
+            pos = value_start + 1
+            while pos < len(json_str) and brace_count > 0:
+                if json_str[pos] == '{':
+                    brace_count += 1
+                elif json_str[pos] == '}':
+                    brace_count -= 1
+                pos += 1
+            return (value_start, pos) if brace_count == 0 else None
+        else:
+            # Primitive value (number, boolean, null) - find next comma, }, or ]
+            pos = value_start
+            while pos < len(json_str):
+                if json_str[pos] in ',}]':
+                    return (value_start, pos)
+                pos += 1
+            return (value_start, len(json_str))
+    except (KeyError, IndexError, ValueError, TypeError) as e:
+        return None
+
+
+def evaluate_copilot_policies(json_content: str, policies: List[dict]) -> tuple:
+    """
+    Evaluate policies against structured copilot JSON fields.
+    
+    Args:
+        json_content: The JSON string content
+        policies: List of policy dictionaries from Supabase
+    
+    Returns:
+        Tuple of (annotations, evaluated_policies, matches) where:
+        - annotations: List of Annotation objects
+        - evaluated_policies: List of policy names that were evaluated
+        - matches: List of match tuples for redaction
+    """
+    try:
+        copilot_data = json.loads(json_content)
+    except json.JSONDecodeError:
+        # Invalid JSON - return empty results
+        return ([], [], [])
+    
+    annotations = []
+    evaluated_policies = []
+    matches = []  # (match_start, match_end, matched_text, value_start, value_end, value_span, policy_name, policy_action)
+    
+    # Extract structured fields from copilot data
+    sensitivity_label = copilot_data.get("sensitivity_label", "")
+    workload = copilot_data.get("workload", "")
+    compliance_flags = copilot_data.get("compliance_flags", [])
+    user_department = copilot_data.get("user", {}).get("department", "")
+    user_role = copilot_data.get("user", {}).get("role", "")
+    action_type = copilot_data.get("action", {}).get("type", "")
+    
+    # Evaluate each policy
+    for policy in policies:
+        policy_id = policy["id"]
+        policy_name = policy["name"]
+        policy_action = policy["action"]
+        conditions = policy.get("conditions", {})
+        
+        # Get structured field conditions
+        labels = conditions.get("labels", [])  # List of sensitivity labels to match
+        workloads = conditions.get("workloads", [])  # List of workloads to match
+        keywords = conditions.get("keywords", [])  # List of keywords to match against compliance_flags or other fields
+        
+        policy_matched = False
+        
+        # Debug logging
+        debug_info = {
+            "policy_id": policy_id,
+            "policy_name": policy_name,
+            "conditions_keys": list(conditions.keys()),
+            "matching_method": "structured_fields",
+            "input_type": "copilot",
+            "input_length": len(json_content),
+            "sensitivity_label": sensitivity_label,
+            "workload": workload,
+            "compliance_flags": compliance_flags
+        }
+        print(f"[POLICY_EVAL] {json.dumps(debug_info)}")
+        
+        # Check sensitivity label match
+        if labels and sensitivity_label:
+            for label_pattern in labels:
+                if label_pattern.lower() in sensitivity_label.lower():
+                    # Find position of sensitivity_label value
+                    pos = find_json_value_position(json_content, copilot_data, "sensitivity_label")
+                    if pos:
+                        match_start, match_end = pos
+                        matched_text = json_content[match_start:match_end]
+                        # For JSON string values, extract just the value portion (without quotes)
+                        if matched_text.startswith('"') and matched_text.endswith('"'):
+                            value_start = match_start + 1
+                            value_end = match_end - 1
+                            value_span = matched_text[1:-1]
+                        else:
+                            value_start = match_start
+                            value_end = match_end
+                            value_span = matched_text
+                        
+                        matches.append((match_start, match_end, matched_text, value_start, value_end, value_span, policy_name, policy_action))
+                        policy_matched = True
+                    break
+        
+        # Check workload match
+        if workloads and workload:
+            for workload_pattern in workloads:
+                if workload_pattern.lower() in workload.lower():
+                    pos = find_json_value_position(json_content, copilot_data, "workload")
+                    if pos:
+                        match_start, match_end = pos
+                        matched_text = json_content[match_start:match_end]
+                        if matched_text.startswith('"') and matched_text.endswith('"'):
+                            value_start = match_start + 1
+                            value_end = match_end - 1
+                            value_span = matched_text[1:-1]
+                        else:
+                            value_start = match_start
+                            value_end = match_end
+                            value_span = matched_text
+                        
+                        matches.append((match_start, match_end, matched_text, value_start, value_end, value_span, policy_name, policy_action))
+                        policy_matched = True
+                    break
+        
+        # Check keyword matches in compliance_flags
+        if keywords and compliance_flags:
+            for keyword in keywords:
+                if keyword.lower() in [flag.lower() for flag in compliance_flags]:
+                    # Find the matching flag in the array
+                    matching_flag = next((f for f in compliance_flags if keyword.lower() in f.lower()), None)
+                    if matching_flag:
+                        # Find position in compliance_flags array
+                        flag_index = compliance_flags.index(matching_flag)
+                        field_path = f"compliance_flags.{flag_index}"
+                        pos = find_json_value_position(json_content, copilot_data, field_path)
+                        if pos:
+                            match_start, match_end = pos
+                            matched_text = json_content[match_start:match_end]
+                            if matched_text.startswith('"') and matched_text.endswith('"'):
+                                value_start = match_start + 1
+                                value_end = match_end - 1
+                                value_span = matched_text[1:-1]
+                            else:
+                                value_start = match_start
+                                value_end = match_end
+                                value_span = matched_text
+                            
+                            matches.append((match_start, match_end, matched_text, value_start, value_end, value_span, policy_name, policy_action))
+                            policy_matched = True
+        
+        # Check keyword matches in other fields (user.department, user.role, action.type)
+        if keywords:
+            # Check user.department
+            if user_department and any(kw.lower() in user_department.lower() for kw in keywords):
+                pos = find_json_value_position(json_content, copilot_data, "user.department")
+                if pos:
+                    match_start, match_end = pos
+                    matched_text = json_content[match_start:match_end]
+                    if matched_text.startswith('"') and matched_text.endswith('"'):
+                        value_start = match_start + 1
+                        value_end = match_end - 1
+                        value_span = matched_text[1:-1]
+                    else:
+                        value_start = match_start
+                        value_end = match_end
+                        value_span = matched_text
+                    
+                    matches.append((match_start, match_end, matched_text, value_start, value_end, value_span, policy_name, policy_action))
+                    policy_matched = True
+            
+            # Check user.role
+            if user_role and any(kw.lower() in user_role.lower() for kw in keywords):
+                pos = find_json_value_position(json_content, copilot_data, "user.role")
+                if pos:
+                    match_start, match_end = pos
+                    matched_text = json_content[match_start:match_end]
+                    if matched_text.startswith('"') and matched_text.endswith('"'):
+                        value_start = match_start + 1
+                        value_end = match_end - 1
+                        value_span = matched_text[1:-1]
+                    else:
+                        value_start = match_start
+                        value_end = match_end
+                        value_span = matched_text
+                    
+                    matches.append((match_start, match_end, matched_text, value_start, value_end, value_span, policy_name, policy_action))
+                    policy_matched = True
+            
+            # Check action.request (for copilot interactions)
+            action_request = copilot_data.get("action", {}).get("request", "")
+            if action_request and any(kw.lower() in action_request.lower() for kw in keywords):
+                pos = find_json_value_position(json_content, copilot_data, "action.request")
+                if pos:
+                    match_start, match_end = pos
+                    matched_text = json_content[match_start:match_end]
+                    if matched_text.startswith('"') and matched_text.endswith('"'):
+                        value_start = match_start + 1
+                        value_end = match_end - 1
+                        value_span = matched_text[1:-1]
+                    else:
+                        value_start = match_start
+                        value_end = match_end
+                        value_span = matched_text
+                    
+                    matches.append((match_start, match_end, matched_text, value_start, value_end, value_span, policy_name, policy_action))
+                    policy_matched = True
+            
+            # Check content_preview
+            content_preview = copilot_data.get("content_preview", "")
+            if content_preview and any(kw.lower() in content_preview.lower() for kw in keywords):
+                pos = find_json_value_position(json_content, copilot_data, "content_preview")
+                if pos:
+                    match_start, match_end = pos
+                    matched_text = json_content[match_start:match_end]
+                    if matched_text.startswith('"') and matched_text.endswith('"'):
+                        value_start = match_start + 1
+                        value_end = match_end - 1
+                        value_span = matched_text[1:-1]
+                    else:
+                        value_start = match_start
+                        value_end = match_end
+                        value_span = matched_text
+                    
+                    matches.append((match_start, match_end, matched_text, value_start, value_end, value_span, policy_name, policy_action))
+                    policy_matched = True
+        
+        if policy_matched:
+            evaluated_policies.append(policy_name)
+    
+    # Build annotations from matches
+    annotations = [
+        Annotation(span=value_span, policy_name=policy, action=action, start=value_start, end=value_end)
+        for match_start, match_end, matched_text, value_start, value_end, value_span, policy, action in matches
+    ]
+    
+    return (annotations, evaluated_policies, matches)
+
+
 # Stub logic for demo scenarios
 def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional[str] = None, policy_pack_version: str = "v1"):
     """Generate deterministic demo run results based on scenario or policy evaluation"""
@@ -222,6 +559,93 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
     governed_output = input_content
     verdict = "SHIPPABLE"
     user_message = "Output is ready to ship."
+    
+    # Special handling for copilot input type - evaluate structured fields
+    if input_type == "copilot":
+        # Load policies from Supabase
+        policies = load_policies(policy_pack_version)
+        
+        # Filter policies that apply to copilot input type
+        copilot_policies = [p for p in policies if input_type in p.get("scope", [])]
+        
+        # Evaluate policies against structured fields
+        annotations, evaluated_policies, matches = evaluate_copilot_policies(input_content, copilot_policies)
+        
+        # Determine verdict based on actions (priority: BLOCK > REVIEW > REDACT)
+        if any(a.action == "BLOCK" for a in annotations):
+            verdict = "BLOCKED"
+            user_message = "This request was blocked due to policy violation."
+            governed_output = json.dumps({"error": "Request blocked by policy", "reason": "Policy violation detected"})
+        elif any(a.action == "REVIEW" for a in annotations):
+            verdict = "REVIEW"
+            user_message = "This content requires manual review before release."
+            # Don't modify output for REVIEW - keep original
+        elif annotations:
+            verdict = "REDACTED"
+            user_message = "Output has been redacted to remove sensitive information."
+            # Apply redactions from end -> start to avoid index drift
+            for match_start, match_end, matched_text, value_start, value_end, value_span, policy, action in sorted(matches, key=lambda x: x[0], reverse=True):
+                if action == "REDACT":
+                    # For JSON, check if the value is a string (has quotes) and maintain JSON structure
+                    if matched_text.startswith('"') and matched_text.endswith('"'):
+                        # String value - replace with "[REDACTED]" to maintain valid JSON
+                        governed_output = governed_output[:match_start] + '"[REDACTED]"' + governed_output[match_end:]
+                    else:
+                        # Non-string value - replace value portion only
+                        governed_output = governed_output[:value_start] + "[REDACTED]" + governed_output[value_end:]
+        
+        # Generate events (same structure as other input types)
+        events = [
+            {"event_type": "Input Sanitized", "payload": {"input_length": len(input_content)}},
+            {"event_type": "Policy Evaluated", "payload": {"policies": evaluated_policies}},
+        ]
+        
+        if annotations:
+            violations = {}
+            for ann in annotations:
+                if ann.policy_name not in violations:
+                    violations[ann.policy_name] = 0
+                violations[ann.policy_name] += 1
+            
+            for policy_name, count in violations.items():
+                events.append({
+                    "event_type": "Violation Detected",
+                    "payload": {"policy": policy_name, "matches": count}
+                })
+            
+            redact_count = sum(1 for a in annotations if a.action == "REDACT")
+            if redact_count > 0:
+                events.append({
+                    "event_type": "Action Applied",
+                    "payload": {"action": "REDACT", "redactions": redact_count}
+                })
+            
+            review_count = sum(1 for a in annotations if a.action == "REVIEW")
+            if review_count > 0:
+                events.append({
+                    "event_type": "Action Applied",
+                    "payload": {"action": "REVIEW", "reviews": review_count}
+                })
+            
+            if any(a.action == "BLOCK" for a in annotations):
+                events.append({
+                    "event_type": "Action Applied",
+                    "payload": {"action": "BLOCK"}
+                })
+        
+        events.append({
+            "event_type": "Final Output Released",
+            "payload": {"verdict": verdict}
+        })
+        
+        return {
+            "baseline_output": baseline_output,
+            "governed_output": governed_output,
+            "verdict": verdict,
+            "user_message": user_message,
+            "annotations": annotations,
+            "events": events,
+        }
     
     # If no scenario_id provided, evaluate all policies from Supabase based on their patterns
     if not scenario_id:
@@ -243,11 +667,13 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
             
             # Get regex patterns from conditions.patterns (list of regex strings)
             regex_patterns = conditions.get("patterns", [])
+            # Get keywords from conditions.keywords (for keyword-based matching)
+            keywords = conditions.get("keywords", [])
             
             # Debug: Log policy evaluation details before matching
             conditions_keys = list(conditions.keys())
             patterns_preview = regex_patterns[:3] if len(regex_patterns) > 0 else []
-            matching_method = "regex"  # Always using regex for patterns
+            matching_method = "regex" if regex_patterns else ("keywords" if keywords else "none")
             
             debug_info = {
                 "policy_id": policy_id,
@@ -255,11 +681,32 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
                 "conditions_keys": conditions_keys,
                 "patterns_preview": patterns_preview,
                 "patterns_count": len(regex_patterns),
+                "keywords_count": len(keywords),
                 "matching_method": matching_method,
                 "input_type": input_type,
                 "input_length": len(input_content)
             }
             print(f"[POLICY_EVAL] {json.dumps(debug_info)}")
+            
+            # Evaluate keywords first (for chat/copilot inputs that use keyword matching)
+            if keywords and input_type in ["chat", "copilot"]:
+                input_lower = input_content.lower()
+                for keyword in keywords:
+                    keyword_lower = keyword.lower()
+                    if keyword_lower in input_lower:
+                        # Find all occurrences of the keyword
+                        start_pos = 0
+                        while True:
+                            idx = input_lower.find(keyword_lower, start_pos)
+                            if idx == -1:
+                                break
+                            match_start = idx
+                            match_end = idx + len(keyword)
+                            matched_text = input_content[match_start:match_end]
+                            # For keyword matches, the entire keyword is the value
+                            value_start, value_end, value_span = match_start, match_end, matched_text
+                            all_matches.append((match_start, match_end, matched_text, value_start, value_end, value_span, policy_name, policy_action))
+                            start_pos = idx + 1
             
             # Evaluate each pattern for this policy using regex (re.finditer)
             for pattern_str in regex_patterns:
@@ -300,11 +747,15 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
             for match_start, match_end, matched_text, value_start, value_end, value_span, policy, action in matches
         ]
         
-        # Determine verdict based on actions
+        # Determine verdict based on actions (priority: BLOCK > REVIEW > REDACT)
         if any(a.action == "BLOCK" for a in annotations):
             verdict = "BLOCKED"
             user_message = "This request was blocked due to potential prompt injection."
             governed_output = "I cannot fulfill this request. It appears to be attempting to override my instructions."
+        elif any(a.action == "REVIEW" for a in annotations):
+            verdict = "REVIEW"
+            user_message = "This content requires manual review before release."
+            # Don't modify output for REVIEW - keep original
         elif annotations:
             verdict = "REDACTED"
             user_message = "Output has been redacted to remove sensitive information."
@@ -339,6 +790,13 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
                 events.append({
                     "event_type": "Action Applied",
                     "payload": {"action": "REDACT", "redactions": redact_count}
+                })
+            
+            review_count = sum(1 for a in annotations if a.action == "REVIEW")
+            if review_count > 0:
+                events.append({
+                    "event_type": "Action Applied",
+                    "payload": {"action": "REVIEW", "reviews": review_count}
                 })
             
             if any(a.action == "BLOCK" for a in annotations):
@@ -440,11 +898,15 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
             for match_start, match_end, matched_text, value_start, value_end, value_span, policy, action in matches
         ]
         
-        # Determine verdict based on actions
+        # Determine verdict based on actions (priority: BLOCK > REVIEW > REDACT)
         if any(a.action == "BLOCK" for a in annotations):
             verdict = "BLOCKED"
             user_message = "This request was blocked due to potential prompt injection."
             governed_output = "I cannot fulfill this request. It appears to be attempting to override my instructions."
+        elif any(a.action == "REVIEW" for a in annotations):
+            verdict = "REVIEW"
+            user_message = "This content requires manual review before release."
+            # Don't modify output for REVIEW - keep original
         elif annotations:
             verdict = "REDACTED"
             user_message = "Output has been redacted to remove sensitive information."
@@ -481,6 +943,13 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
                     "payload": {"action": "REDACT", "redactions": redact_count}
                 })
             
+            review_count = sum(1 for a in annotations if a.action == "REVIEW")
+            if review_count > 0:
+                events.append({
+                    "event_type": "Action Applied",
+                    "payload": {"action": "REVIEW", "reviews": review_count}
+                })
+            
             if any(a.action == "BLOCK" for a in annotations):
                 events.append({
                     "event_type": "Action Applied",
@@ -505,6 +974,16 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
 @app.post("/v1/runs", response_model=CreateRunResponse)
 async def create_run(request: CreateRunRequest):
     """Create a new run and generate stub results"""
+    # Validate JSON content for copilot input type
+    if request.input_type == "copilot":
+        try:
+            json.loads(request.input_content)
+        except json.JSONDecodeError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"input_content must be valid JSON for input_type='copilot': {str(e)}"
+            )
+    
     run_id = str(uuid.uuid4())
     created_at = datetime.utcnow().isoformat()
     policy_pack_version = "v1"
@@ -628,6 +1107,38 @@ async def export_run(run_id: str):
         "violations": [e for e in events if e.event_type == "Violation Detected"]
     }
     
+    # Extract platform metadata for copilot runs to distinguish from API/portal-based AI usage
+    if run.input_type == "copilot":
+        try:
+            copilot_data = json.loads(run.input_content)
+            platform_metadata = {
+                "platform": copilot_data.get("platform", "Unknown"),
+                "workload": copilot_data.get("workload", None),
+                "sensitivity_label": copilot_data.get("sensitivity_label", None),
+                "user": {
+                    "id": copilot_data.get("user", {}).get("id", None),
+                    "email": copilot_data.get("user", {}).get("email", None),
+                    "department": copilot_data.get("user", {}).get("department", None),
+                    "role": copilot_data.get("user", {}).get("role", None),
+                },
+                "action_type": copilot_data.get("action", {}).get("type", None),
+                "compliance_flags": copilot_data.get("compliance_flags", []),
+                "action_context": {
+                    "conversation_id": copilot_data.get("action", {}).get("context", {}).get("conversation_id", None),
+                    "topic": copilot_data.get("action", {}).get("context", {}).get("topic", None),
+                } if copilot_data.get("action", {}).get("context") else None
+            }
+            siem_payload["platform_metadata"] = platform_metadata
+            # Add source field to clearly distinguish Copilot activity
+            siem_payload["source"] = "copilot"
+        except (json.JSONDecodeError, KeyError, TypeError) as e:
+            # If JSON parsing fails, still mark as copilot but without detailed metadata
+            siem_payload["source"] = "copilot"
+            siem_payload["platform_metadata"] = {
+                "error": "Failed to parse copilot metadata",
+                "error_details": str(e)
+            }
+    
     return ExportResponse(
         run=run,
         events=events,
@@ -649,6 +1160,74 @@ async def get_policies():
     return GetPoliciesResponse(
         policy_pack_version="v1",
         policies=policies
+    )
+
+
+class Insight(BaseModel):
+    id: str
+    severity: str
+    title: str
+    detail: str
+    is_placeholder: bool
+
+
+class GetInsightsResponse(BaseModel):
+    status: str
+    generated_at: str
+    insights: List[Insight]
+
+
+@app.get("/v1/insights", response_model=GetInsightsResponse)
+async def get_insights():
+    """
+    Get policy insights (stub/placeholder endpoint).
+    
+    This endpoint returns example insights for demonstration purposes only.
+    In Phase 2, this would analyze actual usage patterns to recommend policy refinements.
+    """
+    # Placeholder insights - these are static examples, not real analysis
+    placeholder_insights = [
+        Insight(
+            id="insight-1",
+            severity="info",
+            title="Secrets Policy Scope Recommendation",
+            detail="Spike in Secrets Policy matches from .env snippets — consider tightening 'code' scope.",
+            is_placeholder=True
+        ),
+        Insight(
+            id="insight-2",
+            severity="warning",
+            title="Email Detection Gap",
+            detail="Repeated near-misses for customer emails in support tickets — add/enable email detection policy.",
+            is_placeholder=True
+        ),
+        Insight(
+            id="insight-3",
+            severity="info",
+            title="Project-Specific IP Policy Suggestion",
+            detail="Project Jaguar keyword appears in 6 runs this week — consider adding a bespoke IP policy.",
+            is_placeholder=True
+        ),
+        Insight(
+            id="insight-4",
+            severity="warning",
+            title="High Redaction Volume",
+            detail="High volume of REDACTED verdicts in chat inputs — review policy thresholds.",
+            is_placeholder=True
+        ),
+        Insight(
+            id="insight-5",
+            severity="info",
+            title="Workload-Specific Policy Recommendation",
+            detail="Copilot workload 'Microsoft Teams' shows elevated compliance flags — consider workload-specific policies.",
+            is_placeholder=True
+        ),
+    ]
+    
+    return GetInsightsResponse(
+        status="stub",
+        generated_at=datetime.utcnow().isoformat(),
+        insights=placeholder_insights
     )
 
 

@@ -65,7 +65,7 @@ export default function RunCreate() {
               Input Type
             </label>
             <div className="flex gap-4">
-              {(["chat", "file", "code"] as InputType[]).map((type) => (
+              {(["chat", "file", "code", "copilot"] as InputType[]).map((type) => (
                 <label key={type} className="flex items-center">
                   <input
                     type="radio"
@@ -128,8 +128,13 @@ export default function RunCreate() {
   
           <div className="bg-white rounded-lg border border-gray-200 p-6">
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              {inputType === "file" ? "File Content (paste text for now)" : "Content"}
+              {inputType === "file" ? "File Content (paste text for now)" : inputType === "copilot" ? "Content (JSON required)" : "Content"}
             </label>
+            {inputType === "copilot" && (
+              <p className="text-sm text-gray-500 mb-2">
+                Copilot input type requires valid JSON content.
+              </p>
+            )}
             <textarea
               value={inputContent}
               onChange={(e) => setInputContent(e.target.value)}
@@ -138,6 +143,8 @@ export default function RunCreate() {
                   ? "Enter your chat message..."
                   : inputType === "file"
                   ? "Paste file content here..."
+                  : inputType === "copilot"
+                  ? 'Enter JSON content, e.g., {"message": "Hello", "context": {...}}'
                   : "Enter code..."
               }
               className="w-full h-64 px-4 py-3 border border-gray-300 rounded-lg font-mono text-sm focus:ring-2 focus:ring-accent focus:border-transparent"

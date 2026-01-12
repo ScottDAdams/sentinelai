@@ -4,11 +4,12 @@ import { CRM_EXPORT_CSV } from "./crm_export_csv";
 import { SLACK_DUMP } from "./slack_dump";
 import { ENV_LEAK } from "./env_leak";
 import { APP_LOGS } from "./app_logs";
+import { M365_COPILOT } from "./m365_copilot";
 
 export type DemoSample = {
   id: string;
   label: string;
-  input_type: "chat" | "file" | "code";
+  input_type: "chat" | "file" | "code" | "copilot";
   content: string;
 };
 
@@ -48,5 +49,11 @@ export const DEMO_SAMPLES: DemoSample[] = [
     label: "Application Logs (JWT in Headers)",
     input_type: "code",
     content: APP_LOGS,
+  },
+  {
+    id: "m365-copilot",
+    label: "Microsoft 365 Copilot Interaction",
+    input_type: "copilot",
+    content: M365_COPILOT,
   },
 ];
