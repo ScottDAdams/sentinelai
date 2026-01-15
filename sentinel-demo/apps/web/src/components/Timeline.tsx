@@ -1,9 +1,10 @@
-import type { RunEvent, EventType } from '@shared/types'
+import type { RunEvent, EventType, Verdict } from '@shared/types'
 
 interface TimelineProps {
   events: RunEvent[]
   onEventClick?: (event: RunEvent) => void
   selectedEventId?: string
+  verdict?: Verdict
 }
 
 // Map event types to step numbers and labels
@@ -13,6 +14,51 @@ const STEP_CONFIG: Record<EventType, { step: number; label: string; isDecisionPo
   'Violation Detected': { step: 3, label: 'Violation Detected', isDecisionPoint: true, isOutcome: false },
   'Action Applied': { step: 4, label: 'Action Applied', isDecisionPoint: true, isOutcome: false },
   'Final Output Released': { step: 5, label: 'Output Released', isDecisionPoint: false, isOutcome: true },
+}
+
+// Get final step label based on verdict
+const getFinalStepLabel = (verdict?: Verdict): string => {
+  if (verdict === 'BLOCKED') {
+    return 'Request Terminated'
+  }
+  return 'Output Released'
+}
+
+// Get final step styling based on verdict
+const getFinalStepStyling = (verdict?: Verdict): { card: string; circle: string; badge: string } => {
+  switch (verdict) {
+    case 'BLOCKED':
+      return {
+        card: 'bg-red-50/50 hover:bg-red-50 border-red-300',
+        circle: 'bg-red-600 text-white',
+        badge: 'bg-red-100 text-red-700'
+      }
+    case 'REDACTED':
+      return {
+        card: 'bg-amber-50/50 hover:bg-amber-50 border-amber-300',
+        circle: 'bg-amber-600 text-white',
+        badge: 'bg-amber-100 text-amber-700'
+      }
+    case 'REVIEW':
+      return {
+        card: 'bg-blue-50/50 hover:bg-blue-50 border-blue-300',
+        circle: 'bg-blue-600 text-white',
+        badge: 'bg-blue-100 text-blue-700'
+      }
+    case 'SHIPPABLE':
+      return {
+        card: 'bg-emerald-50/50 hover:bg-emerald-50 border-emerald-300',
+        circle: 'bg-emerald-600 text-white',
+        badge: 'bg-emerald-100 text-emerald-700'
+      }
+    default:
+      // Default to emerald for outcome
+      return {
+        card: 'bg-emerald-50/50 hover:bg-emerald-50 border-emerald-300',
+        circle: 'bg-emerald-600 text-white',
+        badge: 'bg-emerald-100 text-emerald-700'
+      }
+  }
 }
 
 // Icon components (inline SVG)
@@ -75,7 +121,7 @@ const sortEventsByStep = (events: RunEvent[]): RunEvent[] => {
   })
 }
 
-export default function Timeline({ events, onEventClick, selectedEventId }: TimelineProps) {
+export default function Timeline({ events, onEventClick, selectedEventId, verdict }: TimelineProps) {
   const sortedEvents = sortEventsByStep(events)
   const totalSteps = sortedEvents.length
 
@@ -137,19 +183,27 @@ export default function Timeline({ events, onEventClick, selectedEventId }: Time
             const isOutcome = config.isOutcome
             const isSelected = selectedEventId === event.id
             const isLast = idx === sortedEvents.length - 1
+            const isFinalStep = config.step === 5
+
+            // For final step (step 5), use verdict-based styling
+            const finalStepStyling = isFinalStep && verdict ? getFinalStepStyling(verdict) : null
 
             // Base card styling - consistent for all steps
             const baseCardClasses = 'flex gap-4 p-4 rounded-lg cursor-pointer transition-colors border'
             const cardClasses = isSelected
               ? `${baseCardClasses} bg-accent/10 border-accent`
+              : finalStepStyling
+              ? `${baseCardClasses} ${finalStepStyling.card}`
               : isDecisionPoint
               ? `${baseCardClasses} bg-blue-50/50 hover:bg-blue-50 border-blue-300`
               : isOutcome
               ? `${baseCardClasses} bg-emerald-50/50 hover:bg-emerald-50 border-emerald-300`
               : `${baseCardClasses} bg-gray-50 hover:bg-gray-100 border-gray-200`
 
-            // Circle styling - all steps get circles
-            const circleClasses = isDecisionPoint
+            // Circle styling - all steps get circles, final step uses verdict-based color
+            const circleClasses = finalStepStyling
+              ? `w-8 h-8 rounded-full ${finalStepStyling.circle} flex items-center justify-center font-semibold text-sm relative z-10`
+              : isDecisionPoint
               ? 'w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center font-semibold text-sm relative z-10'
               : isOutcome
               ? 'w-8 h-8 rounded-full bg-emerald-600 text-white flex items-center justify-center font-semibold text-sm relative z-10'
@@ -173,14 +227,20 @@ export default function Timeline({ events, onEventClick, selectedEventId }: Time
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-gray-500">{getIcon(event.event_type)}</span>
                     <div className="font-semibold text-gray-900">
-                      {config.label}
+                      {isFinalStep ? getFinalStepLabel(verdict) : config.label}
                     </div>
                     {isDecisionPoint && (
                       <span className="text-xs px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full font-medium">
                         Decision point
                       </span>
                     )}
-                    {isOutcome && (
+                    {isOutcome && finalStepStyling && (
+                      <span className={`text-xs px-2 py-0.5 ${finalStepStyling.badge} rounded-full font-medium flex items-center gap-1`}>
+                        <CheckIcon />
+                        Outcome
+                      </span>
+                    )}
+                    {isOutcome && !finalStepStyling && (
                       <span className="text-xs px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-full font-medium flex items-center gap-1">
                         <CheckIcon />
                         Outcome

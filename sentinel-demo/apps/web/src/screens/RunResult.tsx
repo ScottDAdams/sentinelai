@@ -240,7 +240,7 @@ export default function RunResult() {
               </div>
             </div>
 
-            <Timeline events={data.events} />
+            <Timeline events={data.events} verdict={data.run.verdict} />
 
             {/* Export is extra valuable for the IT/security story */}
             <ExportButtons runId={data.run.id} />
