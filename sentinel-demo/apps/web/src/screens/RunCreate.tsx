@@ -15,6 +15,21 @@ export default function RunCreate() {
   const [error, setError] = useState<string | null>(null)
   const [selectedSampleId, setSelectedSampleId] = useState<string>('')
 
+  // Filter samples to only show those matching the selected input type
+  const filteredSamples = DEMO_SAMPLES.filter(sample => sample.input_type === inputType)
+
+  // Clear selected sample if it no longer matches the input type
+  const handleInputTypeChange = (newInputType: InputType) => {
+    setInputType(newInputType)
+    // Clear selection if the selected sample doesn't match the new input type
+    if (selectedSampleId) {
+      const selectedSample = DEMO_SAMPLES.find(s => s.id === selectedSampleId)
+      if (selectedSample && selectedSample.input_type !== newInputType) {
+        setSelectedSampleId('')
+      }
+    }
+  }
+
   const handleLoadSample = () => {
     if (!selectedSampleId) return
 
@@ -70,7 +85,7 @@ export default function RunCreate() {
                     name="inputType"
                     value={type}
                     checked={inputType === type}
-                    onChange={(e) => setInputType(e.target.value as InputType)}
+                    onChange={(e) => handleInputTypeChange(e.target.value as InputType)}
                     className="mr-2"
                   />
                   <span className="capitalize">{type}</span>
@@ -90,7 +105,7 @@ export default function RunCreate() {
                 className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm"
               >
                 <option value="">Select a sample...</option>
-                {DEMO_SAMPLES.map((sample) => (
+                {filteredSamples.map((sample) => (
                   <option key={sample.id} value={sample.id}>
                     {sample.label}
                   </option>
