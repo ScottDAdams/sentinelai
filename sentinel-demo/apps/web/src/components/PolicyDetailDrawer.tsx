@@ -141,7 +141,7 @@ function renderPolicyLogic(conditions: Record<string, any>) {
 const STOCK_POLICY_EXPLANATIONS: Record<string, string> = {
   'sensitive-data': 'Detects and protects personally identifiable information (PII) including Social Security Numbers, email addresses, and phone numbers to comply with privacy regulations.',
   'secrets-detection': 'Identifies exposed API keys, tokens, passwords, and other sensitive credentials in code and configuration files to prevent security breaches.',
-  'prompt-injection': 'Blocks attempts to manipulate AI systems through prompt injection attacks that could override safety instructions or extract sensitive information.',
+  'prompt-injection': 'Blocks attempts to bypass safeguards or defeat governance controls. This policy detects explicit attempts to override safety instructions, reveal system prompts, or disable redaction mechanisms.',
   'confidential-data': 'Protects confidential business information such as compensation data, HR records, and other sensitive organizational data from unauthorized disclosure.',
   'confidential-file': 'Flags files containing confidential information based on content analysis and metadata to ensure proper handling and access controls.',
   'sensitivity-label-guard': 'Requires manual review for Copilot interactions involving confidential sensitivity labels or compliance flags indicating financial or executive-level discussions to ensure appropriate governance.',

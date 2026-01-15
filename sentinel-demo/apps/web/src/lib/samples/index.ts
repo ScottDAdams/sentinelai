@@ -6,6 +6,7 @@ import { ENV_LEAK } from "./env_leak";
 import { APP_LOGS } from "./app_logs";
 import { M365_COPILOT } from "./m365_copilot";
 import { PROJECT_JAGUAR_CHAT } from "./project_jaguar_chat";
+import { BYPASS_GOVERNANCE_CHAT } from "./bypass_governance";
 
 export type DemoSample = {
   id: string;
@@ -62,5 +63,11 @@ export const DEMO_SAMPLES: DemoSample[] = [
     label: "Microsoft 365 Copilot Interaction",
     input_type: "copilot",
     content: M365_COPILOT,
+  },
+  {
+    id: "bypass-governance",
+    label: "Bypass Governance Attempt (Blocked)",
+    input_type: "chat",
+    content: BYPASS_GOVERNANCE_CHAT,
   },
 ];

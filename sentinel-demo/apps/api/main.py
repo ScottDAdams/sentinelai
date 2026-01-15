@@ -836,6 +836,11 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
             regex_patterns = conditions.get("patterns", [])
             # Get keywords from conditions.keywords (for keyword-based matching)
             keywords = conditions.get("keywords", [])
+            # Get phrases from conditions.phrases (treated same as keywords for phrase-based matching)
+            phrases = conditions.get("phrases", [])
+            # Combine keywords and phrases for matching
+            if phrases:
+                keywords = list(keywords) + list(phrases)
             
             # Debug: Log policy evaluation details before matching
             conditions_keys = list(conditions.keys())
@@ -917,8 +922,8 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
         # Determine verdict based on actions (priority: BLOCK > REVIEW > REDACT)
         if any(a.action == "BLOCK" for a in annotations):
             verdict = "BLOCKED"
-            user_message = "This request was blocked due to potential prompt injection."
-            governed_output = "I cannot fulfill this request. It appears to be attempting to override my instructions."
+            user_message = "This request was blocked due to an attempt to bypass safeguards or defeat governance controls."
+            governed_output = "I cannot fulfill this request. It appears to be attempting to bypass safeguards, override internal policies, or reveal system prompts."
         elif any(a.action == "REVIEW" for a in annotations):
             verdict = "REVIEW"
             user_message = "This content requires manual review before release."
@@ -1156,8 +1161,8 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
         # Determine verdict based on actions (priority: BLOCK > REVIEW > REDACT)
         if any(a.action == "BLOCK" for a in annotations):
             verdict = "BLOCKED"
-            user_message = "This request was blocked due to potential prompt injection."
-            governed_output = "I cannot fulfill this request. It appears to be attempting to override my instructions."
+            user_message = "This request was blocked due to an attempt to bypass safeguards or defeat governance controls."
+            governed_output = "I cannot fulfill this request. It appears to be attempting to bypass safeguards, override internal policies, or reveal system prompts."
         elif any(a.action == "REVIEW" for a in annotations):
             verdict = "REVIEW"
             user_message = "This content requires manual review before release."
