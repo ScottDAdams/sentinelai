@@ -21,6 +21,9 @@ const getFinalStepLabel = (verdict?: Verdict): string => {
   if (verdict === 'BLOCKED') {
     return 'Request Terminated'
   }
+  if (verdict === 'REVIEW') {
+    return 'Quarantined for Review'
+  }
   return 'Output Released'
 }
 
