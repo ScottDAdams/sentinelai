@@ -19,46 +19,26 @@ export default function OutputBlock({ title, content, annotations = [] }: Output
 
   if (!content) return null
 
-  // Render content with annotations as React elements
+  // Render content with redaction token highlighting
+  // Only highlights the literal "[REDACTED]" token, not annotation ranges
   const renderHighlightedContent = () => {
-    if (annotations.length === 0) {
-      return content
-    }
+    if (!content) return null
 
-    // Sort annotations by start position
-    const sorted = [...annotations].sort((a, b) => a.start - b.start)
-    const parts: Array<{ text: string; highlight?: string }> = []
-    let lastIndex = 0
-
-    for (const ann of sorted) {
-      // Add text before this annotation
-      if (ann.start > lastIndex) {
-        parts.push({ text: content.slice(lastIndex, ann.start) })
-      }
-      // Add highlighted text
-      parts.push({
-        text: content.slice(ann.start, ann.end),
-        highlight: ann.action === 'BLOCK' ? 'bg-red-200' : 'bg-yellow-200',
-      })
-      lastIndex = ann.end
-    }
-
-    // Add remaining text after last annotation
-    if (lastIndex < content.length) {
-      parts.push({ text: content.slice(lastIndex) })
-    }
-
+    // Split content by "[REDACTED]" token and wrap each token in a styled span
+    const parts = content.split(/(\[REDACTED\])/g)
+    
     return (
       <>
-        {parts.map((part, idx) =>
-          part.highlight ? (
-            <mark key={idx} className={`${part.highlight} px-1 rounded`}>
-              {part.text}
-            </mark>
-          ) : (
-            <span key={idx}>{part.text}</span>
-          )
-        )}
+        {parts.map((part, idx) => {
+          if (part === '[REDACTED]') {
+            return (
+              <span key={idx} className="redaction-token">
+                {part}
+              </span>
+            )
+          }
+          return <span key={idx}>{part}</span>
+        })}
       </>
     )
   }

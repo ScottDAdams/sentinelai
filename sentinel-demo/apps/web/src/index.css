@@ -63,4 +63,15 @@ body {
   .badge-muted {
     @apply bg-gray-100 text-gray-700;
   }
+
+  .redaction-token {
+    @apply inline-block px-1.5 py-0.5 rounded;
+    @apply bg-amber-100 text-amber-900;
+    @apply font-mono text-sm;
+    @apply font-medium;
+    /* Ensure it doesn't break word wrapping */
+    white-space: nowrap;
+    /* Monospace-safe alignment */
+    display: inline-block;
+  }
 }
