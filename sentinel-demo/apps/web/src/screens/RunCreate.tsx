@@ -9,20 +9,22 @@ import ContentShell from "../components/ContentShell";
 
 export default function RunCreate() {
   const navigate = useNavigate()
-  const [inputType, setInputType] = useState<InputType>('chat')
+  const [inputType, setInputType] = useState<InputType | 'all'>('all')
   const [inputContent, setInputContent] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [selectedSampleId, setSelectedSampleId] = useState<string>('')
 
-  // Filter samples to only show those matching the selected input type
-  const filteredSamples = DEMO_SAMPLES.filter(sample => sample.input_type === inputType)
+  // Filter samples: show all if "all" is selected, otherwise filter by input type
+  const filteredSamples = inputType === 'all' 
+    ? DEMO_SAMPLES 
+    : DEMO_SAMPLES.filter(sample => sample.input_type === inputType)
 
   // Clear selected sample if it no longer matches the input type
-  const handleInputTypeChange = (newInputType: InputType) => {
+  const handleInputTypeChange = (newInputType: InputType | 'all') => {
     setInputType(newInputType)
-    // Clear selection if the selected sample doesn't match the new input type
-    if (selectedSampleId) {
+    // Clear selection if the selected sample doesn't match the new input type (and not "all")
+    if (selectedSampleId && newInputType !== 'all') {
       const selectedSample = DEMO_SAMPLES.find(s => s.id === selectedSampleId)
       if (selectedSample && selectedSample.input_type !== newInputType) {
         setSelectedSampleId('')
@@ -35,7 +37,7 @@ export default function RunCreate() {
 
     const sample = DEMO_SAMPLES.find(s => s.id === selectedSampleId)
     if (sample) {
-      setInputType(sample.input_type)
+      setInputType(sample.input_type) // Set to the sample's input type when loading
       setInputContent(sample.content)
       setSelectedSampleId('') // Reset dropdown after loading
     }
@@ -53,8 +55,10 @@ export default function RunCreate() {
 
     try {
       // Scenarios are auto-detected by policy engine; manual overrides intentionally omitted.
+      // If "all" is selected, we need an actual input type - default to "chat"
+      const actualInputType = inputType === 'all' ? 'chat' : inputType
       const response = await api.createRun({
-        input_type: inputType,
+        input_type: actualInputType,
         input_content: inputContent,
       })
       navigate(`/runs/${response.run_id}`)
@@ -78,6 +82,17 @@ export default function RunCreate() {
               Input Type
             </label>
             <div className="flex gap-4">
+              <label className="flex items-center">
+                <input
+                  type="radio"
+                  name="inputType"
+                  value="all"
+                  checked={inputType === 'all'}
+                  onChange={(e) => handleInputTypeChange(e.target.value as 'all')}
+                  className="mr-2"
+                />
+                <span>All</span>
+              </label>
               {(["chat", "file", "code", "copilot"] as InputType[]).map((type) => (
                 <label key={type} className="flex items-center">
                   <input
@@ -124,11 +139,16 @@ export default function RunCreate() {
   
           <div className="bg-white rounded-lg border border-gray-200 p-6">
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              {inputType === "file" ? "File Content (paste text for now)" : inputType === "copilot" ? "Content (JSON required)" : "Content"}
+              {inputType === "file" ? "File Content (paste text for now)" : inputType === "copilot" ? "Content (JSON required)" : inputType === "all" ? "Content (select input type or load sample)" : "Content"}
             </label>
             {inputType === "copilot" && (
               <p className="text-sm text-gray-500 mb-2">
                 Copilot input type requires valid JSON content.
+              </p>
+            )}
+            {inputType === "all" && (
+              <p className="text-sm text-gray-500 mb-2">
+                Select an input type above or load a sample to get started.
               </p>
             )}
             <textarea
@@ -141,6 +161,8 @@ export default function RunCreate() {
                   ? "Paste file content here..."
                   : inputType === "copilot"
                   ? 'Enter JSON content, e.g., {"message": "Hello", "context": {...}}'
+                  : inputType === "all"
+                  ? "Select an input type or load a sample..."
                   : "Enter code..."
               }
               className="w-full h-64 px-4 py-3 border border-gray-300 rounded-lg font-mono text-sm focus:ring-2 focus:ring-accent focus:border-transparent"
