@@ -26,15 +26,18 @@ print(f"Sentinel Demo API starting - Build: {API_BUILD}")
 # CORS
 # Default origins: localhost for dev, Fly.io UI for production
 default_origins = "http://localhost:5173,https://sentinel-demo-ui.fly.dev"
-cors_origins = os.getenv("CORS_ORIGINS", default_origins).split(",")
+cors_origins_env = os.getenv("CORS_ORIGINS", default_origins)
+cors_origins = cors_origins_env.split(",")
 # Strip whitespace from origins
 cors_origins = [origin.strip() for origin in cors_origins]
+print(f"[CORS] Allowed origins: {cors_origins}")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],  # Allows all HTTP methods including OPTIONS for preflight
     allow_headers=["*"],  # Allows all headers including Content-Type, Authorization
+    expose_headers=["*"],  # Expose all headers in response
 )
 
 # Supabase client
