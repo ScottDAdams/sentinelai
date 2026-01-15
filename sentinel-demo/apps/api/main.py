@@ -832,6 +832,9 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
             policy_action = policy["action"]
             conditions = policy.get("conditions", {})
             
+            # Track that this policy is being evaluated (add to list before matching)
+            evaluated_policies.append(policy_name)
+            
             # Get regex patterns from conditions.patterns (list of regex strings)
             regex_patterns = conditions.get("patterns", [])
             # Get keywords from conditions.keywords (for keyword-based matching)
@@ -898,10 +901,6 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
                 except re.error as e:
                     # Log pattern errors but continue
                     print(f"Warning: Invalid regex pattern in policy {policy_name}: {pattern_str} - {e}")
-            
-            # Check if this policy had any matches
-            if any(p[6] == policy_name for p in all_matches):
-                evaluated_policies.append(policy_name)
         
         # Sort + de-dupe overlaps (based on value portion to avoid overlapping annotations)
         all_matches.sort(key=lambda x: (x[3], x[4]))  # Sort by value_start, value_end
