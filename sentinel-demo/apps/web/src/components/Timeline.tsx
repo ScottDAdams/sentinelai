@@ -7,12 +7,12 @@ interface TimelineProps {
 }
 
 // Map event types to step numbers and labels
-const STEP_CONFIG: Record<EventType, { step: number; label: string; isDecisionPoint: boolean }> = {
-  'Input Sanitized': { step: 1, label: 'Input Sanitized', isDecisionPoint: false },
-  'Policy Evaluated': { step: 2, label: 'Policies Evaluated', isDecisionPoint: false },
-  'Violation Detected': { step: 3, label: 'Violation Detected', isDecisionPoint: true },
-  'Action Applied': { step: 4, label: 'Action Applied', isDecisionPoint: true },
-  'Final Output Released': { step: 5, label: 'Output Released', isDecisionPoint: false },
+const STEP_CONFIG: Record<EventType, { step: number; label: string; isDecisionPoint: boolean; isOutcome: boolean }> = {
+  'Input Sanitized': { step: 1, label: 'Input Sanitized', isDecisionPoint: false, isOutcome: false },
+  'Policy Evaluated': { step: 2, label: 'Policies Evaluated', isDecisionPoint: false, isOutcome: false },
+  'Violation Detected': { step: 3, label: 'Violation Detected', isDecisionPoint: true, isOutcome: false },
+  'Action Applied': { step: 4, label: 'Action Applied', isDecisionPoint: true, isOutcome: false },
+  'Final Output Released': { step: 5, label: 'Output Released', isDecisionPoint: false, isOutcome: true },
 }
 
 // Icon components (inline SVG)
@@ -87,12 +87,18 @@ export default function Timeline({ events, onEventClick, selectedEventId }: Time
       </p>
       
       <div className="relative">
-        {/* Connector line - connects step circles */}
+        {/* Continuous vertical connector line - connects all step circles */}
         {totalSteps > 1 && (
-          <div className="absolute left-4 top-8 bottom-8 w-0.5 bg-gray-200" />
+          <div 
+            className="absolute left-4 w-0.5 bg-gray-200"
+            style={{ 
+              top: '2rem', // Start from center of first circle (card padding + half circle)
+              bottom: '2rem', // End at center of last circle
+            }}
+          />
         )}
         
-        <div className="space-y-4 relative">
+        <div className="space-y-4">
           {sortedEvents.map((event, idx) => {
             const config = STEP_CONFIG[event.event_type as EventType]
             if (!config) {
@@ -100,10 +106,10 @@ export default function Timeline({ events, onEventClick, selectedEventId }: Time
               return (
                 <div
                   key={event.id}
-                  className={`flex gap-4 p-4 rounded-lg cursor-pointer transition-colors ${
+                  className={`flex gap-4 p-4 rounded-lg cursor-pointer transition-colors border ${
                     selectedEventId === event.id
-                      ? 'bg-accent/10 border-2 border-accent'
-                      : 'bg-gray-50 hover:bg-gray-100 border-2 border-transparent'
+                      ? 'bg-accent/10 border-accent'
+                      : 'bg-gray-50 hover:bg-gray-100 border-gray-200'
                   }`}
                   onClick={() => onEventClick?.(event)}
                 >
@@ -128,38 +134,56 @@ export default function Timeline({ events, onEventClick, selectedEventId }: Time
             }
 
             const isDecisionPoint = config.isDecisionPoint
+            const isOutcome = config.isOutcome
             const isSelected = selectedEventId === event.id
+            const isLast = idx === sortedEvents.length - 1
+
+            // Base card styling - consistent for all steps
+            const baseCardClasses = 'flex gap-4 p-4 rounded-lg cursor-pointer transition-colors border'
+            const cardClasses = isSelected
+              ? `${baseCardClasses} bg-accent/10 border-accent`
+              : isDecisionPoint
+              ? `${baseCardClasses} bg-blue-50/50 hover:bg-blue-50 border-blue-300`
+              : isOutcome
+              ? `${baseCardClasses} bg-emerald-50/50 hover:bg-emerald-50 border-emerald-300`
+              : `${baseCardClasses} bg-gray-50 hover:bg-gray-100 border-gray-200`
+
+            // Circle styling - all steps get circles
+            const circleClasses = isDecisionPoint
+              ? 'w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center font-semibold text-sm relative z-10'
+              : isOutcome
+              ? 'w-8 h-8 rounded-full bg-emerald-600 text-white flex items-center justify-center font-semibold text-sm relative z-10'
+              : 'w-8 h-8 rounded-full bg-gray-600 text-white flex items-center justify-center font-semibold text-sm relative z-10'
 
             return (
               <div
                 key={event.id}
-                className={`flex gap-4 p-4 rounded-lg cursor-pointer transition-colors relative ${
-                  isSelected
-                    ? 'bg-accent/10 border-2 border-accent'
-                    : isDecisionPoint
-                    ? 'bg-blue-50/50 hover:bg-blue-50 border-2 border-blue-200'
-                    : 'bg-gray-50 hover:bg-gray-100 border-2 border-transparent'
-                }`}
+                className={cardClasses}
                 onClick={() => onEventClick?.(event)}
               >
-                <div className="flex-shrink-0 relative z-10">
-                  <div className={`w-8 h-8 rounded-full flex items-center justify-center font-semibold text-sm ${
-                    isDecisionPoint
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-accent text-white'
-                  }`}>
+                {/* Left stepper column */}
+                <div className="flex-shrink-0">
+                  <div className={circleClasses}>
                     {config.step}
                   </div>
                 </div>
-                <div className="flex-1">
-                  <div className="flex items-center gap-2">
+
+                {/* Right card content */}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-gray-500">{getIcon(event.event_type)}</span>
                     <div className="font-semibold text-gray-900">
-                      {config.step}. {config.label}
+                      {config.label}
                     </div>
                     {isDecisionPoint && (
                       <span className="text-xs px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full font-medium">
                         Decision point
+                      </span>
+                    )}
+                    {isOutcome && (
+                      <span className="text-xs px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-full font-medium flex items-center gap-1">
+                        <CheckIcon />
+                        Outcome
                       </span>
                     )}
                   </div>
