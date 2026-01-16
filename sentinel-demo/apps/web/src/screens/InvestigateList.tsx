@@ -17,6 +17,8 @@ interface InvestigateRun {
 }
 
 type TabType = 'BLOCKED' | 'HELD_FOR_REVIEW'
+type SortField = 'created_at' | 'actor' | 'source' | 'verdict' | 'policy_pack_version' | 'preview'
+type SortDirection = 'asc' | 'desc'
 
 export default function InvestigateList() {
   const navigate = useNavigate()
@@ -24,6 +26,8 @@ export default function InvestigateList() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<TabType>('BLOCKED')
+  const [sortField, setSortField] = useState<SortField>('created_at')
+  const [sortDirection, setSortDirection] = useState<SortDirection>('desc')
 
   useEffect(() => {
     const fetchRuns = async () => {
@@ -63,7 +67,79 @@ export default function InvestigateList() {
     return `${surface}${platform}`
   }
 
-  const filteredRuns = runs.filter(run => run.verdict === activeTab)
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortField(field)
+      setSortDirection('asc')
+    }
+  }
+
+  const sortedRuns = [...runs]
+    .filter(run => run.verdict === activeTab)
+    .sort((a, b) => {
+      let aValue: any
+      let bValue: any
+
+      switch (sortField) {
+        case 'created_at':
+          aValue = new Date(a.created_at).getTime()
+          bValue = new Date(b.created_at).getTime()
+          break
+        case 'actor':
+          aValue = getActorDisplay(a.meta).toLowerCase()
+          bValue = getActorDisplay(b.meta).toLowerCase()
+          break
+        case 'source':
+          aValue = getSourceDisplay(a.meta, a.input_type).toLowerCase()
+          bValue = getSourceDisplay(b.meta, b.input_type).toLowerCase()
+          break
+        case 'verdict':
+          aValue = a.verdict
+          bValue = b.verdict
+          break
+        case 'policy_pack_version':
+          aValue = a.policy_pack_version
+          bValue = b.policy_pack_version
+          break
+        case 'preview':
+          aValue = (a.input_preview || '').toLowerCase()
+          bValue = (b.input_preview || '').toLowerCase()
+          break
+        default:
+          return 0
+      }
+
+      if (aValue < bValue) return sortDirection === 'asc' ? -1 : 1
+      if (aValue > bValue) return sortDirection === 'asc' ? 1 : -1
+      return 0
+    })
+
+  const SortIcon = ({ field }: { field: SortField }) => {
+    if (sortField !== field) {
+      return (
+        <span className="ml-1 text-gray-400">
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
+          </svg>
+        </span>
+      )
+    }
+    return (
+      <span className="ml-1 text-gray-600">
+        {sortDirection === 'asc' ? (
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+          </svg>
+        ) : (
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
+        )}
+      </span>
+    )
+  }
 
   if (loading) {
     return (
@@ -133,64 +209,104 @@ export default function InvestigateList() {
           </nav>
         </div>
 
-        {filteredRuns.length === 0 ? (
+        {sortedRuns.length === 0 ? (
           <div className="bg-white rounded-lg border border-gray-200 p-8 text-center">
             <p className="text-gray-600">No {activeTab === 'BLOCKED' ? 'blocked' : 'held for review'} runs found.</p>
           </div>
         ) : (
           <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-            <table className="w-full">
-              <thead className="bg-gray-50 border-b border-gray-200">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Time
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Actor
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Source
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Verdict
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Policy Pack
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Preview
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {filteredRuns.map((run) => (
-                  <tr
-                    key={run.id}
-                    onClick={() => navigate(`/investigate/${run.id}`)}
-                    className="hover:bg-gray-50 cursor-pointer transition-colors"
-                  >
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {formatDate(run.created_at)}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {getActorDisplay(run.meta)}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                      {getSourceDisplay(run.meta, run.input_type)}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <VerdictPill verdict={run.verdict} />
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {run.policy_pack_version}
-                    </td>
-                    <td className="px-6 py-4 text-sm text-gray-600 max-w-md truncate">
-                      {run.input_preview || 'No preview'}
-                    </td>
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-gray-50 border-b border-gray-200">
+                  <tr>
+                    <th 
+                      className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition-colors"
+                      onClick={() => handleSort('created_at')}
+                    >
+                      <div className="flex items-center">
+                        Time
+                        <SortIcon field="created_at" />
+                      </div>
+                    </th>
+                    <th 
+                      className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition-colors"
+                      onClick={() => handleSort('actor')}
+                    >
+                      <div className="flex items-center">
+                        Actor
+                        <SortIcon field="actor" />
+                      </div>
+                    </th>
+                    <th 
+                      className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition-colors"
+                      onClick={() => handleSort('source')}
+                    >
+                      <div className="flex items-center">
+                        Source
+                        <SortIcon field="source" />
+                      </div>
+                    </th>
+                    <th 
+                      className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition-colors"
+                      onClick={() => handleSort('verdict')}
+                    >
+                      <div className="flex items-center">
+                        Verdict
+                        <SortIcon field="verdict" />
+                      </div>
+                    </th>
+                    <th 
+                      className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition-colors"
+                      onClick={() => handleSort('policy_pack_version')}
+                    >
+                      <div className="flex items-center">
+                        Policy Pack
+                        <SortIcon field="policy_pack_version" />
+                      </div>
+                    </th>
+                    <th 
+                      className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition-colors"
+                      onClick={() => handleSort('preview')}
+                    >
+                      <div className="flex items-center">
+                        Preview
+                        <SortIcon field="preview" />
+                      </div>
+                    </th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {sortedRuns.map((run) => (
+                    <tr
+                      key={run.id}
+                      onClick={() => navigate(`/investigate/${run.id}`)}
+                      className="hover:bg-gray-50 cursor-pointer transition-colors"
+                    >
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {formatDate(run.created_at)}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {getActorDisplay(run.meta)}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                        {getSourceDisplay(run.meta, run.input_type)}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <VerdictPill verdict={run.verdict} />
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {run.policy_pack_version}
+                      </td>
+                      <td className="px-6 py-4 text-sm text-gray-600">
+                        <div className="max-w-md overflow-x-auto">
+                          <span className="whitespace-nowrap">{run.input_preview || 'No preview'}</span>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
       </ContentShell>
