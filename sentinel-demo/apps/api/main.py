@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 from supabase import create_client, Client
 import json
+from verdict_mapping import policy_action_to_verdict, get_user_message_for_verdict
 
 load_dotenv()
 
@@ -157,7 +158,7 @@ class CreateRunRequest(BaseModel):
 
 class CreateRunResponse(BaseModel):
     run_id: str
-    verdict: str = Field(..., pattern="^(SHIPPABLE|REDACTED|BLOCKED|REVIEW)$")
+    verdict: str = Field(..., pattern="^(ALLOWED|REDACTED|HELD_FOR_REVIEW|BLOCKED)$")
     user_message: str
     baseline_output: str
     governed_output: str
@@ -614,8 +615,8 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
     events = []
     baseline_output = input_content
     governed_output = input_content
-    verdict = "SHIPPABLE"
-    user_message = "Output is ready to ship."
+    verdict = "ALLOWED"
+    user_message = "Output approved."
     
     # Special handling for copilot input type - evaluate structured fields
     if input_type == "copilot":
@@ -641,23 +642,21 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
         # Evaluate policies against structured fields
         annotations, evaluated_policies, matches = evaluate_copilot_policies(input_content, copilot_policies)
         
-        # Determine verdict based on actions (priority: BLOCK > REVIEW > REDACT)
-        if any(a.action == "BLOCK" for a in annotations):
-            verdict = "BLOCKED"
-            user_message = "This request was blocked due to policy violation."
+        # Determine verdict based on actions using shared mapping utility
+        actions = [a.action for a in annotations]
+        verdict = policy_action_to_verdict(actions)
+        user_message = get_user_message_for_verdict(verdict)
+        
+        if verdict == "BLOCKED":
             governed_output = json.dumps({"error": "Request blocked by policy", "reason": "Policy violation detected"})
-        elif any(a.action == "REVIEW" for a in annotations):
-            verdict = "REVIEW"
-            user_message = "This content requires manual review before release."
+        elif verdict == "HELD_FOR_REVIEW":
             # Replace governed_output with quarantine placeholder (do not echo original content)
             review_policies = [a.policy_name for a in annotations if a.action == "REVIEW"]
             unique_review_policies = list(set(review_policies))
             # Determine queue name based on policy
             queue_name = "IP Review" if any("Jaguar" in p or "IP" in p for p in unique_review_policies) else "General Review"
             governed_output = f"This content has been quarantined and held for review due to policy: {', '.join(unique_review_policies)}."
-        elif annotations:
-            verdict = "REDACTED"
-            user_message = "Output has been redacted to remove sensitive information."
+        elif verdict == "REDACTED":
             # Apply redactions from end -> start to avoid index drift
             for match_start, match_end, matched_text, value_start, value_end, value_span, policy, action in sorted(matches, key=lambda x: x[0], reverse=True):
                 if action == "REDACT":
@@ -789,11 +788,11 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
         # Build meta with review information
         meta = {
             "annotations": [a.dict() for a in annotations],
-            "review_required": verdict == "REVIEW",
+            "review_required": verdict == "HELD_FOR_REVIEW",
         }
         if review_reasons_aggregated:
             meta["review_reasons"] = list(review_reasons_aggregated.values())
-        if verdict == "REVIEW":
+        if verdict == "HELD_FOR_REVIEW":
             meta["review_queue"] = review_queue_name or "General Review"
             if recommended_route:
                 meta["recommended_route"] = recommended_route
@@ -925,23 +924,21 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
             for match_start, match_end, matched_text, value_start, value_end, value_span, policy, action in matches
         ]
         
-        # Determine verdict based on actions (priority: BLOCK > REVIEW > REDACT)
-        if any(a.action == "BLOCK" for a in annotations):
-            verdict = "BLOCKED"
-            user_message = "This request was blocked due to an attempt to bypass safeguards or defeat governance controls."
+        # Determine verdict based on actions using shared mapping utility
+        actions = [a.action for a in annotations]
+        verdict = policy_action_to_verdict(actions)
+        user_message = get_user_message_for_verdict(verdict)
+        
+        if verdict == "BLOCKED":
             governed_output = "I cannot fulfill this request. It appears to be attempting to bypass safeguards, override internal policies, or reveal system prompts."
-        elif any(a.action == "REVIEW" for a in annotations):
-            verdict = "REVIEW"
-            user_message = "This content requires manual review before release."
+        elif verdict == "HELD_FOR_REVIEW":
             # Replace governed_output with quarantine placeholder (do not echo original content)
             review_policies = [a.policy_name for a in annotations if a.action == "REVIEW"]
             unique_review_policies = list(set(review_policies))
             # Determine queue name based on policy
             queue_name = "IP Review" if any("Jaguar" in p or "IP" in p for p in unique_review_policies) else "General Review"
             governed_output = f"This content has been quarantined and held for review due to policy: {', '.join(unique_review_policies)}."
-        elif annotations:
-            verdict = "REDACTED"
-            user_message = "Output has been redacted to remove sensitive information."
+        elif verdict == "REDACTED":
             # Apply redactions from end -> start to avoid index drift
             # Use full match info (match_start, match_end, matched_text) for redaction (preserves key name)
             for match_start, match_end, matched_text, value_start, value_end, value_span, policy, action in sorted(matches, key=lambda x: x[0], reverse=True):
@@ -1053,11 +1050,11 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
         
         meta = {
             "annotations": [a.dict() for a in annotations],
-            "review_required": verdict == "REVIEW",
+            "review_required": verdict == "HELD_FOR_REVIEW",
         }
         if review_reasons_aggregated:
             meta["review_reasons"] = list(review_reasons_aggregated.values())
-        if verdict == "REVIEW":
+        if verdict == "HELD_FOR_REVIEW":
             meta["review_queue"] = review_queue_name or "General Review"
             if recommended_route:
                 meta["recommended_route"] = recommended_route
@@ -1164,23 +1161,21 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
             for match_start, match_end, matched_text, value_start, value_end, value_span, policy, action in matches
         ]
         
-        # Determine verdict based on actions (priority: BLOCK > REVIEW > REDACT)
-        if any(a.action == "BLOCK" for a in annotations):
-            verdict = "BLOCKED"
-            user_message = "This request was blocked due to an attempt to bypass safeguards or defeat governance controls."
+        # Determine verdict based on actions using shared mapping utility
+        actions = [a.action for a in annotations]
+        verdict = policy_action_to_verdict(actions)
+        user_message = get_user_message_for_verdict(verdict)
+        
+        if verdict == "BLOCKED":
             governed_output = "I cannot fulfill this request. It appears to be attempting to bypass safeguards, override internal policies, or reveal system prompts."
-        elif any(a.action == "REVIEW" for a in annotations):
-            verdict = "REVIEW"
-            user_message = "This content requires manual review before release."
+        elif verdict == "HELD_FOR_REVIEW":
             # Replace governed_output with quarantine placeholder (do not echo original content)
             review_policies = [a.policy_name for a in annotations if a.action == "REVIEW"]
             unique_review_policies = list(set(review_policies))
             # Determine queue name based on policy
             queue_name = "IP Review" if any("Jaguar" in p or "IP" in p for p in unique_review_policies) else "General Review"
             governed_output = f"This content has been quarantined and held for review due to policy: {', '.join(unique_review_policies)}."
-        elif annotations:
-            verdict = "REDACTED"
-            user_message = "Output has been redacted to remove sensitive information."
+        elif verdict == "REDACTED":
             # Apply redactions from end -> start to avoid index drift
             # Use full match info (match_start, match_end, matched_text) for redaction (preserves key name)
             for match_start, match_end, matched_text, value_start, value_end, value_span, policy, action in sorted(matches, key=lambda x: x[0], reverse=True):
@@ -1292,14 +1287,19 @@ def generate_demo_run(input_type: str, input_content: str, scenario_id: Optional
         
         meta = {
             "annotations": [a.dict() for a in annotations],
-            "review_required": verdict == "REVIEW",
+            "review_required": verdict == "HELD_FOR_REVIEW",
         }
         if review_reasons_aggregated:
             meta["review_reasons"] = list(review_reasons_aggregated.values())
-        if verdict == "REVIEW":
+        if verdict == "HELD_FOR_REVIEW":
             meta["review_queue"] = review_queue_name or "General Review"
             if recommended_route:
                 meta["recommended_route"] = recommended_route
+    
+    # Runtime assertion: ensure verdict is always canonical
+    canonical_verdicts = {"ALLOWED", "REDACTED", "HELD_FOR_REVIEW", "BLOCKED"}
+    if verdict not in canonical_verdicts:
+        raise ValueError(f"Invalid verdict '{verdict}'. Must be one of: {canonical_verdicts}")
     
     return {
         "baseline_output": baseline_output,
@@ -1495,6 +1495,106 @@ async def export_run(run_id: str):
         },
         siem_payload_preview=siem_payload
     )
+
+
+class InvestigateRunListItem(BaseModel):
+    id: str
+    created_at: str
+    verdict: str
+    input_type: str
+    input_preview: Optional[str]
+    policy_pack_version: str
+
+
+class GetInvestigateRunsResponse(BaseModel):
+    runs: List[InvestigateRunListItem]
+
+
+@app.get("/v1/investigate/runs", response_model=GetInvestigateRunsResponse)
+async def get_investigate_runs():
+    """Get high-signal runs (BLOCKED and HELD_FOR_REVIEW) for investigation"""
+    from datetime import datetime, timedelta
+    
+    # Query runs with BLOCKED or HELD_FOR_REVIEW verdict, sorted by newest first
+    result = supabase.table("runs").select(
+        "id, created_at, verdict, input_type, input_preview, policy_pack_version"
+    ).in_("verdict", ["BLOCKED", "HELD_FOR_REVIEW"]).order("created_at", desc=True).execute()
+    
+    runs = []
+    for r in result.data:
+        runs.append(InvestigateRunListItem(
+            id=r["id"],
+            created_at=r["created_at"],
+            verdict=r["verdict"],
+            input_type=r["input_type"],
+            input_preview=r.get("input_preview"),
+            policy_pack_version=r["policy_pack_version"]
+        ))
+    
+    return GetInvestigateRunsResponse(runs=runs)
+
+
+class SimilarRunsCountResponse(BaseModel):
+    count: int
+    by_user: Optional[int] = None
+
+
+@app.get("/v1/investigate/runs/{run_id}/similar", response_model=SimilarRunsCountResponse)
+async def get_similar_runs_count(run_id: str):
+    """Get count of similar BLOCKED runs in last 30 days"""
+    from datetime import datetime, timedelta
+    
+    # Get the run to check its verdict and metadata
+    run_result = supabase.table("runs").select("*").eq("id", run_id).execute()
+    if not run_result.data:
+        raise HTTPException(status_code=404, detail="Run not found")
+    
+    run_data = run_result.data[0]
+    verdict = run_data["verdict"]
+    
+    # Only count similar runs for BLOCKED verdicts
+    if verdict != "BLOCKED":
+        return SimilarRunsCountResponse(count=0)
+    
+    # Calculate 30 days ago
+    thirty_days_ago = (datetime.utcnow() - timedelta(days=30)).isoformat()
+    
+    # Query for BLOCKED runs in last 30 days
+    result = supabase.table("runs").select("id, meta").eq("verdict", "BLOCKED").gte("created_at", thirty_days_ago).execute()
+    
+    total_count = len(result.data)
+    
+    # Try to extract user identifier from current run's meta
+    user_id = None
+    if run_data.get("meta") and isinstance(run_data["meta"], dict):
+        # Check common user identifier paths
+        meta = run_data["meta"]
+        if "user" in meta and isinstance(meta["user"], dict):
+            user_id = meta["user"].get("id") or meta["user"].get("email")
+        elif "user_id" in meta:
+            user_id = meta["user_id"]
+        elif "user_email" in meta:
+            user_id = meta["user_email"]
+    
+    # Count by user if we found a user identifier
+    by_user_count = None
+    if user_id:
+        by_user_count = 0
+        for r in result.data:
+            r_meta = r.get("meta") or {}
+            if isinstance(r_meta, dict):
+                r_user_id = None
+                if "user" in r_meta and isinstance(r_meta["user"], dict):
+                    r_user_id = r_meta["user"].get("id") or r_meta["user"].get("email")
+                elif "user_id" in r_meta:
+                    r_user_id = r_meta["user_id"]
+                elif "user_email" in r_meta:
+                    r_user_id = r_meta["user_email"]
+                
+                if r_user_id == user_id:
+                    by_user_count += 1
+    
+    return SimilarRunsCountResponse(count=total_count, by_user=by_user_count)
 
 
 @app.get("/v1/policies", response_model=GetPoliciesResponse)

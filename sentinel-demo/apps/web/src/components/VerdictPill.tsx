@@ -6,13 +6,13 @@ interface VerdictPillProps {
 
 export default function VerdictPill({ verdict }: VerdictPillProps) {
   const styles = {
-    SHIPPABLE: 'bg-green-100 text-green-800',
+    ALLOWED: 'bg-green-100 text-green-800',
     REDACTED: 'bg-yellow-100 text-yellow-800',
     BLOCKED: 'bg-red-100 text-red-800',
-    REVIEW: 'bg-purple-100 text-purple-800',
+    HELD_FOR_REVIEW: 'bg-purple-100 text-purple-800',
   }
 
-  const displayText = verdict === 'REVIEW' ? 'HELD FOR REVIEW' : verdict
+  const displayText = verdict === 'HELD_FOR_REVIEW' ? 'Held for review' : verdict === 'ALLOWED' ? 'Allowed' : verdict === 'REDACTED' ? 'Redacted' : verdict === 'BLOCKED' ? 'Blocked' : verdict
 
   return (
     <span

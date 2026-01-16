@@ -22,6 +22,12 @@ export default function TopBar() {
                 Run
               </Link>
               <Link
+                to="/investigate"
+                className="text-gray-600 hover:text-gray-900 transition-colors"
+              >
+                Investigate
+              </Link>
+              <Link
                 to="/policies"
                 className="text-gray-600 hover:text-gray-900 transition-colors"
               >

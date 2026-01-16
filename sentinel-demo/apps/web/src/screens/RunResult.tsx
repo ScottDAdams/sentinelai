@@ -66,12 +66,12 @@ export default function RunResult() {
       ? "bg-red-50 border-red-200"
       : verdict === "REDACTED"
       ? "bg-amber-50 border-amber-200"
-      : verdict === "REVIEW"
+      : verdict === "HELD_FOR_REVIEW"
       ? "bg-purple-50 border-purple-200"
       : "bg-emerald-50 border-emerald-200";
 
   // Get review policy name from annotations
-  const reviewPolicyName = verdict === "REVIEW" && data.annotations.length > 0
+  const reviewPolicyName = verdict === "HELD_FOR_REVIEW" && data.annotations.length > 0
     ? data.annotations.find(a => a.action === "REVIEW")?.policy_name || "Policy"
     : null;
 
@@ -80,9 +80,9 @@ export default function RunResult() {
       ? "Blocked"
       : verdict === "REDACTED"
       ? "Released with redactions"
-      : verdict === "REVIEW"
+      : verdict === "HELD_FOR_REVIEW"
       ? `Held for review${reviewPolicyName ? ` (${reviewPolicyName})` : ""}`
-      : "Shippable";
+      : "Allowed";
 
   return (
     <Layout>
@@ -132,8 +132,8 @@ export default function RunResult() {
               annotations={data.annotations}
             />
 
-            {/* Baseline only when it matters (show for non-shippable verdicts) */}
-            {data.run.verdict !== "SHIPPABLE" && (
+            {/* Baseline only when it matters (show for non-allowed verdicts) */}
+            {data.run.verdict !== "ALLOWED" && (
               <OutputBlock
                 title="Baseline Output"
                 content={data.run.baseline_output}
@@ -142,7 +142,7 @@ export default function RunResult() {
             )}
 
             {/* Why this was held - for REVIEW verdicts */}
-            {verdict === "REVIEW" && data.annotations.length > 0 && (
+            {verdict === "HELD_FOR_REVIEW" && data.annotations.length > 0 && (
               <div className="card card-pad border-purple-200 bg-purple-50">
                 <h3 className="text-sm font-semibold text-gray-900 mb-4">Why this was held</h3>
                 <div className="space-y-4">
@@ -184,7 +184,7 @@ export default function RunResult() {
             )}
 
             {/* Recommended remediation - for REVIEW verdicts */}
-            {verdict === "REVIEW" && data.run.meta?.recommended_route && (
+            {verdict === "HELD_FOR_REVIEW" && data.run.meta?.recommended_route && (
               <div className="card card-pad border-blue-200 bg-blue-50">
                 <h3 className="text-sm font-semibold text-gray-900 mb-4">Recommended remediation</h3>
                 <div className="space-y-3">

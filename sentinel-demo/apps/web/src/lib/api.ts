@@ -42,5 +42,8 @@ import type {
     
     getInsights: (): Promise<{ status: string; generated_at: string; insights: Array<{ id: string; severity: string; title: string; detail: string; is_placeholder: boolean }> }> =>
       fetchAPI('/v1/insights'),
+    
+    getInvestigateRuns: (): Promise<{ runs: Array<{ id: string; created_at: string; verdict: string; input_type: string; input_preview: string | null; policy_pack_version: string }> }> =>
+      fetchAPI('/v1/investigate/runs'),
   }
   

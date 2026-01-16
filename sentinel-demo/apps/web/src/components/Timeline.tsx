@@ -21,7 +21,7 @@ const getFinalStepLabel = (verdict?: Verdict): string => {
   if (verdict === 'BLOCKED') {
     return 'Request Terminated'
   }
-  if (verdict === 'REVIEW') {
+  if (verdict === 'HELD_FOR_REVIEW') {
     return 'Quarantined for Review'
   }
   return 'Output Released'
@@ -42,13 +42,13 @@ const getFinalStepStyling = (verdict?: Verdict): { card: string; circle: string;
         circle: 'bg-amber-600 text-white',
         badge: 'bg-amber-100 text-amber-700'
       }
-    case 'REVIEW':
+    case 'HELD_FOR_REVIEW':
       return {
-        card: 'bg-blue-50/50 hover:bg-blue-50 border-blue-300',
-        circle: 'bg-blue-600 text-white',
-        badge: 'bg-blue-100 text-blue-700'
+        card: 'bg-purple-50/50 hover:bg-purple-50 border-purple-300',
+        circle: 'bg-purple-600 text-white',
+        badge: 'bg-purple-100 text-purple-700'
       }
-    case 'SHIPPABLE':
+    case 'ALLOWED':
       return {
         card: 'bg-emerald-50/50 hover:bg-emerald-50 border-emerald-300',
         circle: 'bg-emerald-600 text-white',
@@ -130,7 +130,7 @@ export default function Timeline({ events, onEventClick, selectedEventId, verdic
 
   return (
     <div className="bg-white rounded-lg border border-gray-200 p-6">
-      <h3 className="text-lg font-semibold text-gray-900 mb-1">Enforcement Sequence</h3>
+      <h3 className="text-lg font-semibold text-gray-900 mb-1">Enforcement Audit Sequence</h3>
       <p className="text-sm text-gray-500 mb-6">
         Each step is evaluated in order. Later actions cannot occur without earlier conditions being met.
       </p>
@@ -185,7 +185,6 @@ export default function Timeline({ events, onEventClick, selectedEventId, verdic
             const isDecisionPoint = config.isDecisionPoint
             const isOutcome = config.isOutcome
             const isSelected = selectedEventId === event.id
-            const isLast = idx === sortedEvents.length - 1
             const isFinalStep = config.step === 5
 
             // For final step (step 5), use verdict-based styling

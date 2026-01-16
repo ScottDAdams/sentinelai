@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Quick test to verify REVIEW verdict behavior:
+Quick test to verify HELD_FOR_REVIEW verdict behavior:
 - governed_output should be replaced with "held for review" message
-- verdict should be REVIEW
+- verdict should be HELD_FOR_REVIEW
 - meta should include review_required: true and review_reasons
 """
 
@@ -30,8 +30,8 @@ This is for internal planning only, but I want a concise breakdown I can share w
     
     result = generate_demo_run("chat", test_content, None, "v1")
     
-    # Verify verdict is REVIEW
-    assert result["verdict"] == "REVIEW", f"Expected REVIEW verdict, got {result['verdict']}"
+    # Verify verdict is HELD_FOR_REVIEW
+    assert result["verdict"] == "HELD_FOR_REVIEW", f"Expected HELD_FOR_REVIEW verdict, got {result['verdict']}"
     
     # Verify governed_output is NOT the original content
     assert result["governed_output"] != test_content, "governed_output should not contain original content"
