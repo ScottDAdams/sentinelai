@@ -88,7 +88,7 @@ export default function AdminRunRecord() {
 
         <section>
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-2xl font-bold text-gray-900">Enforcement Sequence</h2>
+            <h2 className="text-2xl font-bold text-gray-900">Enforcement Audit Sequence</h2>
             <button
               onClick={handleReplay}
               className="px-4 py-2 bg-accent text-white rounded-lg hover:bg-accent-dark transition-colors font-medium"
