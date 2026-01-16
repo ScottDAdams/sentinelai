@@ -297,10 +297,8 @@ export default function InvestigateList() {
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                         {run.policy_pack_version}
                       </td>
-                      <td className="px-6 py-4 text-sm text-gray-600">
-                        <div className="max-w-md overflow-x-auto">
-                          <span className="whitespace-nowrap">{run.input_preview || 'No preview'}</span>
-                        </div>
+                      <td className="px-6 py-4 text-sm text-gray-600 whitespace-nowrap">
+                        {run.input_preview || 'No preview'}
                       </td>
                     </tr>
                   ))}
