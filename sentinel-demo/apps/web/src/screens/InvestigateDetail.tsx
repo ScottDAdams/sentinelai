@@ -98,7 +98,7 @@ export default function InvestigateDetail() {
               onClick={() => navigate('/investigate')}
               className="text-sm text-gray-600 hover:text-gray-900 mb-4"
             >
-              ← Back to Investigate
+              ← Back to Exceptions
             </button>
             <h1 className="text-3xl font-bold text-gray-900">Investigation</h1>
           </div>
@@ -107,7 +107,7 @@ export default function InvestigateDetail() {
         {/* Summary Card */}
         <div className="bg-white rounded-lg border border-gray-200 p-6">
           <h2 className="text-lg font-semibold text-gray-900 mb-4">Summary</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             <div>
               <div className="text-sm text-gray-500">Verdict</div>
               <div className="mt-1">
@@ -115,15 +115,43 @@ export default function InvestigateDetail() {
               </div>
             </div>
             <div>
-              <div className="text-sm text-gray-500">Input Type</div>
+              <div className="text-sm text-gray-500">Actor</div>
+              <div className="mt-1 text-sm font-medium text-gray-900">
+                {meta?.actor?.display || 'Unknown'}
+                {meta?.actor?.id && (
+                  <span className="ml-2 text-xs text-gray-500 font-mono">
+                    ({meta.actor.id})
+                  </span>
+                )}
+              </div>
+              {(meta?.actor?.dept || meta?.actor?.role) && (
+                <div className="mt-1 text-xs text-gray-600">
+                  {meta.actor.role}
+                  {meta.actor.dept && meta.actor.dept !== 'N/A' && ` • ${meta.actor.dept}`}
+                </div>
+              )}
+            </div>
+            <div>
+              <div className="text-sm text-gray-500">Source</div>
               <div className="mt-1 text-sm font-medium text-gray-900 capitalize">
-                {run.input_type}
+                {meta?.source?.surface || run.input_type}
+                {meta?.source?.platform && meta.source.platform !== 'Sentinel Demo UI' && (
+                  <span className="ml-2 text-xs text-gray-600">
+                    ({meta.source.platform})
+                  </span>
+                )}
               </div>
             </div>
             <div>
               <div className="text-sm text-gray-500">Created At</div>
               <div className="mt-1 text-sm font-medium text-gray-900">
                 {formatDate(run.created_at)}
+              </div>
+            </div>
+            <div>
+              <div className="text-sm text-gray-500">Input Type</div>
+              <div className="mt-1 text-sm font-medium text-gray-900 capitalize">
+                {run.input_type}
               </div>
             </div>
             <div>

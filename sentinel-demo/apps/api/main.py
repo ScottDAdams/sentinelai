@@ -1341,6 +1341,47 @@ async def create_run(request: CreateRunRequest):
     if "meta" in result:
         meta.update(result["meta"])
     
+    # Always ensure actor and source metadata exist
+    if "actor" not in meta:
+        # Extract actor from copilot payload if available
+        actor = None
+        source = None
+        if request.input_type == "copilot":
+            try:
+                copilot_data = json.loads(request.input_content)
+                user_data = copilot_data.get("user", {})
+                platform = copilot_data.get("platform", "Unknown")
+                if user_data:
+                    actor = {
+                        "id": user_data.get("id", "u_demo_001"),
+                        "display": user_data.get("email") or user_data.get("name") or "Demo User",
+                        "role": user_data.get("role", "Employee"),
+                        "dept": user_data.get("department", "N/A")
+                    }
+                source = {
+                    "surface": "copilot",
+                    "platform": platform
+                }
+            except (json.JSONDecodeError, KeyError, TypeError):
+                pass
+        
+        # Default actor/source for demo
+        if not actor:
+            actor = {
+                "id": "u_demo_001",
+                "display": "Demo User",
+                "role": "Employee",
+                "dept": "N/A"
+            }
+        if not source:
+            source = {
+                "surface": request.input_type,
+                "platform": "Sentinel Demo UI"
+            }
+        
+        meta["actor"] = actor
+        meta["source"] = source
+    
     run_data = {
         "id": run_id,
         "created_at": created_at,
@@ -1504,6 +1545,7 @@ class InvestigateRunListItem(BaseModel):
     input_type: str
     input_preview: Optional[str]
     policy_pack_version: str
+    meta: dict
 
 
 class GetInvestigateRunsResponse(BaseModel):
@@ -1517,7 +1559,7 @@ async def get_investigate_runs():
     
     # Query runs with BLOCKED or HELD_FOR_REVIEW verdict, sorted by newest first
     result = supabase.table("runs").select(
-        "id, created_at, verdict, input_type, input_preview, policy_pack_version"
+        "id, created_at, verdict, input_type, input_preview, policy_pack_version, meta"
     ).in_("verdict", ["BLOCKED", "HELD_FOR_REVIEW"]).order("created_at", desc=True).execute()
     
     runs = []
@@ -1528,10 +1570,25 @@ async def get_investigate_runs():
             verdict=r["verdict"],
             input_type=r["input_type"],
             input_preview=r.get("input_preview"),
-            policy_pack_version=r["policy_pack_version"]
+            policy_pack_version=r["policy_pack_version"],
+            meta=r.get("meta") or {}
         ))
     
     return GetInvestigateRunsResponse(runs=runs)
+
+
+class ExceptionsCountResponse(BaseModel):
+    count: int
+
+
+@app.get("/v1/investigate/count", response_model=ExceptionsCountResponse)
+async def get_exceptions_count():
+    """Get count of runs requiring investigation (BLOCKED or HELD_FOR_REVIEW)"""
+    # Use count query for efficiency
+    result = supabase.table("runs").select("id", count="exact").in_("verdict", ["BLOCKED", "HELD_FOR_REVIEW"]).execute()
+    # Supabase returns count in the response
+    count = getattr(result, 'count', len(result.data) if result.data else 0)
+    return ExceptionsCountResponse(count=count)
 
 
 class SimilarRunsCountResponse(BaseModel):
